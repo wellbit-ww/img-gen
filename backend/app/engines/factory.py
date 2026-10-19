@@ -22,4 +22,4 @@ def create_engine(settings: Settings, model_key: str) -> ImageEngine:
 
         return UtilsEngine(settings=settings)
 
-    return MockEngine()
+    raise ValueError(f"Unknown model key for ENGINE_MODE=real: {model_key}")

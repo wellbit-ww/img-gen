@@ -39,6 +39,8 @@ class UtilsEngine:
         lora_id: str | None = None,
         lora_scale: float = 0.8,
     ) -> list[Image.Image]:
+        if self._settings.engine_mode == "real":
+            raise RuntimeError("Utils engine cannot generate images")
         return self._mock.generate(
             prompt,
             width,
@@ -65,14 +67,28 @@ class UtilsEngine:
         on_step: StepCallback,
         cancel_check: Callable[[], bool],
     ) -> list[Image.Image]:
+        if self._settings.engine_mode == "real":
+            raise RuntimeError("Utils engine cannot edit images")
         return self._mock.edit(
             prompt, image, mask, references, strength, steps, seed, on_step, cancel_check
         )
 
     def upscale(self, image: Image.Image, target_w: int, target_h: int) -> Image.Image:
-        return upscale_image(image, target_w, target_h, self._settings.models_dir)
+        return upscale_image(
+            image,
+            target_w,
+            target_h,
+            self._settings.models_dir,
+            engine_mode=self._settings.engine_mode,
+        )
 
     def remove_background(self, image: Image.Image, method: str) -> Image.Image:
+        if method == "qwen":
+            raise RuntimeError(
+                "Qwen background removal must run on the Qwen edit queue, not utils"
+            )
         if method in ("birefnet", "auto"):
             return remove_background_birefnet(image, self._settings)
+        if self._settings.engine_mode == "real":
+            raise RuntimeError(f"Unsupported background removal method: {method}")
         return self._mock.remove_background(image, method)

@@ -15,7 +15,7 @@ class FluxLoadError(RuntimeError):
 
 class FluxAltEngine:
     name = "flux-alt"
-    capabilities: set[Capability] = {"t2i", "edit", "rgba"}
+    capabilities: set[Capability] = {"t2i", "rgba"}
     _fallback: MockEngine
 
     def __init__(self, settings: Settings) -> None:
@@ -27,7 +27,7 @@ class FluxAltEngine:
         import torch
         from diffusers import Flux2KleinPipeline
 
-        repo = "black-forest-labs/FLUX.2-klein-9B"
+        repo = "black-forest-labs/flux-3-image-klein"
         local = self._settings.models_dir / repo.replace("/", "__")
         source = str(local) if local.exists() else repo
         try:
@@ -128,7 +128,11 @@ class FluxAltEngine:
         from app.engines.upscaler import upscale_image
 
         return upscale_image(
-            image, target_w, target_h, self._settings.models_dir, self._settings.engine_mode
+            image,
+            target_w,
+            target_h,
+            self._settings.models_dir,
+            engine_mode=self._settings.engine_mode,
         )
 
     def remove_background(self, image: Image.Image, method: str) -> Image.Image:

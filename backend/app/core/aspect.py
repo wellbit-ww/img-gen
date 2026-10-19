@@ -27,8 +27,8 @@ def resolve_size(aspect: AspectRatio, quality: Quality) -> tuple[int, int]:
 
 def upscale_target_size(target: str, src_w: int, src_h: int) -> tuple[int, int]:
     if target == "2k":
-        return 1920, 1080
-    # 4K 16:9 fit inside 3840x2160 preserving aspect
-    max_w, max_h = 3840, 2160
+        max_w, max_h = 1920, 1080
+    else:
+        max_w, max_h = 3840, 2160
     scale = min(max_w / src_w, max_h / src_h)
     return _round16(int(src_w * scale)), _round16(int(src_h * scale))

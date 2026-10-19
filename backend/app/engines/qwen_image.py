@@ -82,12 +82,9 @@ class QwenImageEngine:
         )
         if self._settings.worker_vae_tiling and hasattr(self._pipe, "vae"):
             self._pipe.vae.enable_tiling()
-        try:
-            self._pipe.to("cuda")
-            if self._settings.worker_torch_compile and hasattr(self._pipe, "transformer"):
-                self._pipe.transformer = torch.compile(self._pipe.transformer)
-        except Exception:
-            apply_memory_strategy(self._pipe, self._memory)
+        apply_memory_strategy(self._pipe, self._memory)
+        if self._settings.worker_torch_compile and hasattr(self._pipe, "transformer"):
+            self._pipe.transformer = torch.compile(self._pipe.transformer)
 
     def _load_with_oom_fallback(self) -> None:
         if self._pipe is not None:
@@ -134,10 +131,12 @@ class QwenImageEngine:
             self._loaded_lora = lora_id
         self._pipe.set_adapters([lora_id], adapter_weights=[scale])
 
-    def _clear_lora(self) -> None:
-        if self._pipe is not None and self._loaded_lora:
-            self._pipe.unload_lora_weights()
-            self._loaded_lora = None
+    @staticmethod
+    def _true_cfg_scale(guidance: float, negative_prompt: str) -> float:
+        """Qwen-Image-2.1 is sampled at true_cfg_scale=1.0 unless CFG is explicitly needed."""
+        if guidance > 1.0 and negative_prompt.strip():
+            return guidance
+        return 1.0
 
     def _callback(
         self,
@@ -172,7 +171,7 @@ class QwenImageEngine:
                 width=width,
                 height=height,
                 num_inference_steps=steps,
-                true_cfg_scale=guidance,
+                true_cfg_scale=self._true_cfg_scale(guidance, negative_prompt),
                 generator=generator,
                 callback_on_step_end=self._callback(on_step, cancel_check, steps),
             )
@@ -189,7 +188,7 @@ class QwenImageEngine:
                     width=width,
                     height=height,
                     num_inference_steps=steps,
-                    true_cfg_scale=guidance,
+                    true_cfg_scale=self._true_cfg_scale(guidance, negative_prompt),
                     generator=generator,
                     callback_on_step_end=self._callback(on_step, cancel_check, steps),
                 )
@@ -237,7 +236,6 @@ class QwenImageEngine:
                 cancel_check,
             )
             images.extend(result.images)
-        self._clear_lora()
         return images
 
     def edit(
@@ -246,7 +244,7 @@ class QwenImageEngine:
         image: Image.Image,
         mask: Image.Image | None,
         references: list[Image.Image],
-        _strength: float,
+        strength: float,
         steps: int,
         seed: int | None,
         on_step: StepCallback,
