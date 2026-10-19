@@ -22,6 +22,37 @@ def data_dir(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def worker_db(data_dir: Path):
+    from sqlmodel import create_engine
+
+    import app.worker.tasks as worker_tasks
+    from app.config import get_settings
+    from app.db.session import init_db
+
+    get_settings.cache_clear()
+    settings = get_settings()
+    init_db(settings.db_path)
+    worker_tasks._settings = settings
+    worker_tasks._engine_db = create_engine(
+        f"sqlite:///{settings.db_path}",
+        connect_args={"check_same_thread": False},
+    )
+    return settings
+
+
+@pytest.fixture(autouse=True)
+def mock_redis_enqueue(monkeypatch):
+    async def _fake_enqueue(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr("app.services.queue.enqueue_job", _fake_enqueue)
+    async def _fake_cancel(*_a, **_k):
+        return None
+
+    monkeypatch.setattr("app.services.events.set_cancel_flag", _fake_cancel)
+
+
+@pytest.fixture
 def client(data_dir: Path) -> TestClient:
     from app.config import get_settings
     from app.db.session import init_db
