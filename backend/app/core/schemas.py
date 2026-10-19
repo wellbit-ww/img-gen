@@ -138,7 +138,6 @@ class JobResponse(BaseModel):
 class ImageMeta(BaseModel):
     id: str
     job_id: str
-    path: str
     url: str
     prompt: str | None = None
     preset_id: str | None = None
