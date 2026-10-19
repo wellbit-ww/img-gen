@@ -46,12 +46,12 @@ class GenerateRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=8000)
     negative_prompt: str = ""
     preset_id: str | None = None
-    aspect_ratio: AspectRatio = AspectRatio.RATIO_16_9
+    aspect_ratio: AspectRatio | None = None
     quality: Quality = Quality.STANDARD
     num_images: int = Field(default=1, ge=1, le=8)
     seed: int | None = None
-    transparent: bool = False
-    text_mode: TextMode = TextMode.NONE
+    transparent: bool | None = None
+    text_mode: TextMode | None = None
     overlay: OverlaySpec | None = None
     enhance_prompt: bool = False
     model: ModelChoice = ModelChoice.AUTO
@@ -87,7 +87,7 @@ class BatchLine(BaseModel):
 class BatchRequest(BaseModel):
     lines: list[BatchLine] = Field(min_length=1, max_length=50)
     preset_id: str | None = None
-    aspect_ratio: AspectRatio = AspectRatio.RATIO_16_9
+    aspect_ratio: AspectRatio | None = None
     quality: Quality = Quality.DRAFT
     num_images: int = Field(default=1, ge=1, le=4)
     text_mode: TextMode = TextMode.OVERLAY
@@ -100,7 +100,7 @@ class OverlayApplyRequest(BaseModel):
 class EnhancePromptRequest(BaseModel):
     prompt: str
     preset_id: str | None = None
-    aspect_ratio: AspectRatio = AspectRatio.RATIO_16_9
+    aspect_ratio: AspectRatio | None = None
     text_mode: TextMode = TextMode.NONE
 
 

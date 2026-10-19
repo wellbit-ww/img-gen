@@ -120,7 +120,8 @@ def apply_overlay(
     fonts_dir = settings.fonts_dir
     if not fonts_dir.is_absolute():
         fonts_dir = (Path.cwd() / fonts_dir).resolve()
-    out_path = apply_and_save_overlay(Path(img.path), body.overlay, fonts_dir)
+    source = Path(img.source_path or img.path)
+    out_path = apply_and_save_overlay(source, body.overlay, fonts_dir)
     img.path = str(out_path)
     img.has_overlay = True
     session.add(img)

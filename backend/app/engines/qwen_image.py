@@ -139,7 +139,10 @@ class QwenImageEngine:
         self._ensure_loaded()
         gen_seed = seed if seed is not None else random.randint(0, 2**31 - 1)
         generator = torch.Generator(device="cuda").manual_seed(gen_seed)
-        ref_input: Image.Image | list[Image.Image] = references[0] if len(references) == 1 else references
+        if len(references) == 1:
+            ref_input: Image.Image | list[Image.Image] = references[0]
+        else:
+            ref_input = references
         if not references:
             ref_input = image
         kwargs: dict = {

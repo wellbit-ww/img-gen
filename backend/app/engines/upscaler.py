@@ -5,7 +5,12 @@ from pathlib import Path
 from PIL import Image
 
 
-def upscale_image(image: Image.Image, target_w: int, target_h: int, models_dir: Path) -> Image.Image:
+def upscale_image(
+    image: Image.Image,
+    target_w: int,
+    target_h: int,
+    models_dir: Path,
+) -> Image.Image:
     try:
         import numpy as np
         import torch
@@ -20,7 +25,8 @@ def upscale_image(image: Image.Image, target_w: int, target_h: int, models_dir: 
         tensor = torch.from_numpy(arr).permute(2, 0, 1).unsqueeze(0).cuda()
         with torch.no_grad():
             out = model(tensor).clamp(0, 1)
-        out_img = Image.fromarray((out.squeeze(0).permute(1, 2, 0).cpu().numpy() * 255).astype("uint8"))
+        arr = (out.squeeze(0).permute(1, 2, 0).cpu().numpy() * 255).astype("uint8")
+        out_img = Image.fromarray(arr)
         return out_img.resize((target_w, target_h), Image.Resampling.LANCZOS)
     except Exception:
         return image.resize((target_w, target_h), Image.Resampling.LANCZOS)

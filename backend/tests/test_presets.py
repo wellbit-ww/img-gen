@@ -18,6 +18,16 @@ def test_presets_load():
     assert "Облачная платформа" in params["prompt"]
 
 
+def test_icon_set_uses_preset_aspect():
+    presets_dir = Path(__file__).resolve().parents[2] / "config" / "presets"
+    store = PresetStore(presets_dir)
+    slide = store.get("icon-set")
+    req = GenerateRequest(prompt="icon", preset_id="icon-set")
+    params = build_generation_params(req, slide, [])
+    assert params["width"] == 2048
+    assert params["height"] == 2048
+
+
 def test_draft_resolution():
     presets_dir = Path(__file__).resolve().parents[2] / "config" / "presets"
     store = PresetStore(presets_dir)

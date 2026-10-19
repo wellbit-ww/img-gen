@@ -70,21 +70,24 @@ def build_generation_params(
     subject_override: str | None = None,
 ) -> dict[str, Any]:
     subject = subject_override or req.prompt
-    aspect = req.aspect_ratio
     quality = req.quality
-    transparent = req.transparent
-    text_mode = req.text_mode
+    aspect = req.aspect_ratio or (preset.default_aspect if preset else AspectRatio.RATIO_16_9)
+    transparent = (
+        req.transparent
+        if req.transparent is not None
+        else (preset.transparent if preset else False)
+    )
+    text_mode = (
+        req.text_mode
+        if req.text_mode is not None
+        else (preset.text_mode if preset else TextMode.NONE)
+    )
     negative = req.negative_prompt
     steps = {"draft": 8, "standard": 30, "high": 50}[quality.value]
     guidance = 4.0
     lora_id = req.lora_id
 
     if preset:
-        aspect = req.aspect_ratio or preset.default_aspect
-        if req.transparent is False and preset.transparent:
-            transparent = preset.transparent
-        if req.text_mode == TextMode.NONE:
-            text_mode = preset.text_mode
         negative = negative or preset.negative
         steps = preset.steps.get(quality.value, steps)
         guidance = preset.guidance

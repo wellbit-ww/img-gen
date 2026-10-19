@@ -38,7 +38,12 @@ class MockEngine:
         draw.multiline_text((24, 24), text, fill=(255, 255, 255, 255), font=font, spacing=6)
         return img
 
-    def _simulate_steps(self, steps: int, on_step: StepCallback, cancel_check: Callable[[], bool]) -> None:
+    def _simulate_steps(
+        self,
+        steps: int,
+        on_step: StepCallback,
+        cancel_check: Callable[[], bool],
+    ) -> None:
         total = max(steps, 1)
         for i in range(1, total + 1):
             if cancel_check():
@@ -97,4 +102,10 @@ class MockEngine:
 
     def remove_background(self, image: Image.Image, method: str) -> Image.Image:
         rgba = image.convert("RGBA")
-        return self._placeholder(f"bgremove:{method}", rgba.width, rgba.height, "RGBA", transparent=True)
+        return self._placeholder(
+            f"bgremove:{method}",
+            rgba.width,
+            rgba.height,
+            "RGBA",
+            transparent=True,
+        )

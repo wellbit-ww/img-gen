@@ -21,12 +21,13 @@ from app.core.schemas import (
 )
 from app.db.models import ImageRecord
 from app.db.session import get_session
+from app.services.brand import get_brand_colors
 from app.services.job_service import create_job
 from app.services.ollama import OllamaClient
 
 router = APIRouter(tags=["generation"])
 
-CYRILLIC = re.compile(r"[А-Яа-яЁё]")
+CYRILLIC_IN_QUOTES = re.compile(r'"([^"]*[А-Яа-яЁё][^"]*)"')
 
 
 def _preset_store(settings: Settings) -> PresetStore:
@@ -65,10 +66,11 @@ async def generate(
             req.overlay = OverlaySpec(title=enhanced.overlay_title)
             req.text_mode = TextMode.OVERLAY
 
-    if req.text_mode == TextMode.NONE and CYRILLIC.search(req.prompt):
+    if req.text_mode is None and CYRILLIC_IN_QUOTES.search(req.prompt):
         req.text_mode = TextMode.OVERLAY
 
-    params = build_generation_params(req, preset, settings.brand_color_list)
+    brand_colors = get_brand_colors(session, settings)
+    params = build_generation_params(req, preset, brand_colors)
     params["original_prompt"] = req.prompt
     job_id, queue, notice = await create_job(
         session,
@@ -97,7 +99,8 @@ async def batch_generate(
     )
     store = _preset_store(settings)
     preset = store.get(req.preset_id)
-    params = build_generation_params(gen, preset, settings.brand_color_list)
+    brand_colors = get_brand_colors(session, settings)
+    params = build_generation_params(gen, preset, brand_colors)
     params["lines"] = [line.model_dump() for line in req.lines]
     job_id, queue, notice = await create_job(
         session,

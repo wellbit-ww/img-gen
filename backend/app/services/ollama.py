@@ -23,7 +23,7 @@ class OllamaClient:
         user_payload = {
             "prompt": req.prompt,
             "preset_id": req.preset_id,
-            "aspect_ratio": req.aspect_ratio.value,
+            "aspect_ratio": (req.aspect_ratio.value if req.aspect_ratio else "16:9"),
             "text_mode": req.text_mode.value,
             "brand_colors": self._settings.brand_color_list,
         }
