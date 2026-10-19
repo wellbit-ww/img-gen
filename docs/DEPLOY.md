@@ -47,11 +47,17 @@ Tune `config/workers.yaml` memory strategies if OOM occurs.
 
 ## Training LoRA
 
+1. Upload a dataset via `POST /api/lora/datasets` (images are resized to 1328 px on the long side; captions via Ollama).
+2. Start training: `POST /api/lora/train` with `dataset_id`.
+3. The worker writes `train.yaml` (ai-toolkit, `arch: qwen_image_2`) under `/data/lora_runs/<train_id>/` and runs:
+
 ```powershell
-docker compose --profile training up -d trainer
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile training run --rm trainer
 ```
 
-Use the UI **Brand style** tab to upload images and start training; configs land in `/data/lora_configs`.
+Set `TRAIN_CONFIG_PATH=/data/lora_runs/<train_id>/train.yaml` when invoking the trainer container (the worker sets this automatically in `ENGINE_MODE=real`).
+
+Logs and sample PNGs: `/data/lora_runs/<train_id>/train.log` and under `workspace/`. Status: `GET /api/lora/train/<train_id>`.
 
 ## Firewall
 

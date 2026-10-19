@@ -18,6 +18,9 @@ from app.api.presets import router as presets_router
 from app.api.settings_route import router as settings_router
 from app.config import get_settings
 from app.db.session import init_db
+from app.logging_setup import configure_logging
+
+configure_logging()
 
 
 @asynccontextmanager

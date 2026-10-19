@@ -2,23 +2,19 @@ services:
   api:
     environment:
       ENGINE_MODE: real
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+      OLLAMA_URL: http://ollama:11434
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/api/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
   worker:
     build:
       context: .
       dockerfile: docker/Dockerfile.worker
-    environment:
-      ENGINE_MODE: real
-      MODELS_DIR: /models
-    volumes:
-      - models_data:/models
+    shm_size: "16gb"
     deploy:
       resources:
         reservations:
@@ -26,7 +22,34 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-    shm_size: "16gb"
+    environment:
+      ENGINE_MODE: real
+      MODELS_DIR: /models
+      OLLAMA_URL: http://ollama:11434
+      IMG_GEN_ROOT: /app/repo
+    volumes:
+      - models_data:/models
+      - app_data:/data
+      - ./config:/config:ro
+      - ./scripts:/scripts:ro
+      - .:/app/repo:ro
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "python -c \"import redis; redis.from_url('${REDIS_URL}').ping()\" || exit 1",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+
+  redis:
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
 
   ollama:
     image: ollama/ollama:latest
@@ -45,6 +68,12 @@ services:
               count: 1
               capabilities: [gpu]
               device_ids: ["3"]
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
     restart: unless-stopped
 
   trainer:
@@ -56,8 +85,10 @@ services:
       - models_data:/models
       - app_data:/data
       - ./config:/config:ro
+      - ./scripts:/scripts:ro
     environment:
       NVIDIA_VISIBLE_DEVICES: "3"
+      HF_HOME: /models/hf
     deploy:
       resources:
         reservations:

@@ -31,7 +31,7 @@ services:
   worker:
     build:
       context: .
-      dockerfile: docker/Dockerfile.api
+      dockerfile: docker/Dockerfile.worker
     command: ["img-gen-worker"]
     env_file:
       - .env

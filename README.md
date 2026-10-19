@@ -57,6 +57,8 @@ uv run ruff check .
 | PyTorch на RTX 5090 | CUDA 12.8+ и wheels `cu128` |
 | Кириллица на картинке | Режим **overlay** (текст через Pillow) |
 | Медленная загрузка моделей | Именованный Docker-том `models_data`, не NTFS bind-mount |
+| LoRA сразу падает | Нужен `ENGINE_MODE=real`, Docker и `docker compose run trainer` |
+| Нет шрифта в overlay | Положите `Inter-Regular.ttf` / `Inter-Bold.ttf` в `assets/fonts` |
 
 ## Структура
 

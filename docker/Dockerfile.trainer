@@ -9,7 +9,12 @@ WORKDIR /opt
 RUN git clone --depth 1 https://github.com/ostris/ai-toolkit.git
 
 WORKDIR /opt/ai-toolkit
-RUN pip3 install --no-cache-dir -r requirements.txt || true
+RUN pip3 install --no-cache-dir -r requirements.txt || pip3 install --no-cache-dir torch torchvision
 
-ENV PATH="/opt/ai-toolkit:$PATH"
-CMD ["bash", "-c", "echo Mount dataset config and run train script; sleep infinity"]
+COPY scripts/lora/train_entrypoint.sh /scripts/lora/train_entrypoint.sh
+RUN chmod +x /scripts/lora/train_entrypoint.sh
+
+ENV HF_HOME=/models/hf
+WORKDIR /data
+
+ENTRYPOINT ["/scripts/lora/train_entrypoint.sh"]

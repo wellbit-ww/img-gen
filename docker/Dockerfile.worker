@@ -14,8 +14,19 @@ COPY backend/ ./
 
 RUN uv sync --frozen --no-dev --extra gpu
 
+COPY config /config
+COPY scripts /scripts
+
+RUN useradd -m -u 10001 -s /bin/bash appuser \
+    && chown -R appuser:appuser /app
+
 ENV PATH="/app/backend/.venv/bin:$PATH"
 ENV PYTHONPATH=/app/backend
 ENV HF_HOME=/models/hf
+ENV IMG_GEN_ROOT=/app
+ENV WORKERS_CONFIG=/config/workers.yaml
+ENV PRESETS_DIR=/config/presets
+
+USER appuser
 
 CMD ["img-gen-worker"]
