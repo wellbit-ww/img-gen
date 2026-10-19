@@ -167,6 +167,7 @@ def _generate_sync(
     job_id: str,
     params: dict[str, Any],
     model_key: str,
+    line_index: int | None = None,
 ) -> list[str]:
     _resolve_seed(params)
 
@@ -190,7 +191,9 @@ def _generate_sync(
             lora_id=params.get("lora_id"),
             lora_scale=params.get("lora_scale", 0.8),
         )
-    return _save_images(job_id, images, params, params.get("prompt"))
+    return _save_images(
+        job_id, images, params, params.get("prompt"), line_index=line_index
+    )
 
 
 async def _run_guarded(
@@ -314,7 +317,9 @@ async def process_batch_line(ctx: dict, job_id: str, payload: dict[str, Any]) ->
 
     client = get_sync_redis(_settings.redis_url)
     try:
-        ids = await asyncio.to_thread(_generate_sync, ctx, parent_id, params, model_key)
+        ids = await asyncio.to_thread(
+            _generate_sync, ctx, parent_id, params, model_key, line_index
+        )
         client.incr(batch_counter_key(parent_id, "done"))
         _publish(
             parent_id,
@@ -388,19 +393,12 @@ async def process_batch(ctx: dict, job_id: str, payload: dict[str, Any]) -> None
 
 
 async def process_lora_train(ctx: dict, job_id: str, payload: dict[str, Any]) -> None:
-    from app.db.models import LoraTrainJob
+    from app.services.lora_train import execute_lora_training
 
-    train_id = payload.get("train_id", job_id)
+    params = payload.get("params") or payload
+    train_id = str(params.get("train_id", job_id))
 
-    def _fail() -> None:
-        msg = "Обучение LoRA не настроено: реализуйте блок D (trainer / ai-toolkit)."
-        with Session(_engine_db) as session:
-            train = session.get(LoraTrainJob, train_id)
-            if train:
-                train.status = "failed"
-                train.log = msg
-                session.add(train)
-                session.commit()
-        raise RuntimeError(msg)
+    def _train() -> None:
+        execute_lora_training(_settings, train_id, job_id, params)
 
-    await _run_guarded(job_id, _fail)
+    await _run_guarded(job_id, _train)

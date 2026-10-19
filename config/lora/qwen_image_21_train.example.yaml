@@ -1,0 +1,2 @@
+# Generated at runtime into /data/lora_runs/<train_id>/train.yaml
+# See app/services/lora_train.py — arch qwen_image_2 for Qwen/Qwen-Image-2.1 (ai-toolkit).

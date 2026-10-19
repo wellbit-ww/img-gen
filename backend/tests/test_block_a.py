@@ -187,17 +187,45 @@ async def test_cancel_during_run_not_overwritten(worker_db):
 
 @pytest.mark.asyncio
 async def test_lora_train_fails_clearly(worker_db):
+    from app.db.models import LoraDataset, LoraTrainJob
+
     job_id = "lora-job-1"
+    train_id = "train-a-1"
     with Session(worker_tasks._engine_db) as session:
+        session.add(
+            LoraDataset(id="ds-a", name="d", trigger_word="tw", path=str(worker_db.data_dir))
+        )
+        session.add(
+            LoraTrainJob(
+                id=train_id,
+                dataset_id="ds-a",
+                config_path="",
+                output_path=str(worker_db.data_dir / "lora_runs" / train_id),
+            )
+        )
         session.add(JobRecord(id=job_id, job_type="lora_train", status="queued", queue="quality"))
         session.commit()
     with (
         patch("app.worker.tasks.publish_job_event"),
         patch("app.worker.tasks.is_job_cancelled_sync", return_value=False),
+        patch("app.services.lora_train.unload_ollama_sync"),
     ):
-        await process_lora_train({}, job_id, {"config_path": "/x", "output_dir": "/y"})
+        await process_lora_train(
+            {},
+            job_id,
+            {
+                "params": {
+                    "train_id": train_id,
+                    "dataset_path": str(worker_db.data_dir),
+                    "rank": 16,
+                    "steps": 10,
+                    "learning_rate": 1e-4,
+                }
+            },
+        )
     with Session(worker_tasks._engine_db) as session:
         job = session.get(JobRecord, job_id)
         assert job is not None
         assert job.status == "failed"
-        assert "не настроено" in (job.error or "").lower() or "LoRA" in (job.error or "")
+        err = (job.error or "").lower()
+        assert "real" in err or "lora" in err or "trainer" in err

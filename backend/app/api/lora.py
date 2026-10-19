@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from uuid import uuid4
 
@@ -13,6 +12,8 @@ from app.core.schemas import JobCreateResponse, LoraTrainRequest
 from app.db.models import LoraDataset, LoraTrainJob
 from app.db.session import get_session
 from app.services.job_service import create_job
+from app.services.lora_dataset import resize_dataset_image, write_caption
+from app.services.lora_train import lora_run_dir
 from app.services.ollama import OllamaClient
 
 router = APIRouter(prefix="/lora", tags=["lora"])
@@ -31,10 +32,12 @@ async def create_dataset(
     base.mkdir(parents=True, exist_ok=True)
     client = OllamaClient(settings)
     for i, upload in enumerate(files):
-        dest = base / f"img_{i:03d}.png"
+        suffix = Path(upload.filename or "img.png").suffix or ".png"
+        dest = base / f"img_{i:03d}{suffix}"
         dest.write_bytes(await upload.read())
+        resize_dataset_image(dest)
         caption = await client.caption_image(dest, trigger_word)
-        (base / f"img_{i:03d}.txt").write_text(caption, encoding="utf-8")
+        write_caption(dest, caption)
     record = LoraDataset(
         id=dataset_id,
         name=name,
@@ -44,6 +47,29 @@ async def create_dataset(
     session.add(record)
     session.commit()
     return {"dataset_id": dataset_id}
+
+
+@router.put("/datasets/{dataset_id}/captions/{image_stem}")
+def update_caption(
+    dataset_id: str,
+    image_stem: str,
+    text: str = Form(...),
+    session: Session = Depends(get_session),
+) -> dict[str, str]:
+    dataset = session.get(LoraDataset, dataset_id)
+    if not dataset:
+        raise HTTPException(404, "Dataset not found")
+    base = Path(dataset.path)
+    image_path = None
+    for ext in (".png", ".jpg", ".jpeg", ".webp"):
+        candidate = base / f"{image_stem}{ext}"
+        if candidate.is_file():
+            image_path = candidate
+            break
+    if image_path is None:
+        raise HTTPException(404, "Image not found in dataset")
+    write_caption(image_path, text)
+    return {"status": "ok", "caption_path": str(image_path.with_suffix(".txt"))}
 
 
 @router.get("/datasets")
@@ -73,34 +99,26 @@ async def train_lora(
     if not dataset:
         raise HTTPException(404, "Dataset not found")
     train_id = str(uuid4())
-    config_dir = settings.data_dir / "lora_configs"
-    config_dir.mkdir(parents=True, exist_ok=True)
-    out_dir = settings.models_dir / "loras" / train_id
-    config = {
+    run_dir = lora_run_dir(settings, train_id)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    train = LoraTrainJob(
+        id=train_id,
+        dataset_id=dataset.id,
+        config_path=str(run_dir / "train.yaml"),
+        output_path=str(run_dir),
+    )
+    session.add(train)
+    session.commit()
+    params = {
+        "train_id": train_id,
         "dataset_path": dataset.path,
         "trigger_word": dataset.trigger_word,
         "rank": req.rank,
         "steps": req.steps,
         "learning_rate": req.learning_rate,
-        "output_dir": str(out_dir),
-    }
-    config_path = config_dir / f"{train_id}.json"
-    config_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
-    train = LoraTrainJob(
-        id=train_id,
-        dataset_id=dataset.id,
-        config_path=str(config_path),
-        output_path=str(out_dir),
-    )
-    session.add(train)
-    session.commit()
-    params = {
-        "config_path": str(config_path),
-        "output_dir": str(out_dir),
-        "lines": [],
     }
     job_id, queue, notice = await create_job(
-        session, settings, "lora_train", {**params, "train_id": train_id}, quality="high"
+        session, settings, "lora_train", params, quality="high"
     )
     train.job_id = job_id
     session.add(train)
@@ -111,15 +129,14 @@ async def train_lora(
 @router.get("/train/{train_id}")
 def get_lora_train(
     train_id: str,
+    settings: Settings = Depends(get_app_settings),
     session: Session = Depends(get_session),
 ) -> dict:
     train = session.get(LoraTrainJob, train_id)
     if not train:
         raise HTTPException(404, "Training job not found")
-    samples: list[str] = []
-    out = Path(train.output_path or "")
-    if out.is_dir():
-        samples = sorted(p.name for p in out.glob("*.png"))
+    out = Path(train.output_path or lora_run_dir(settings, train_id))
+    samples = sorted({p.name for p in out.rglob("*.png")}) if out.is_dir() else []
     log_path = out / "train.log"
     log_text = train.log
     if log_path.is_file():
@@ -130,4 +147,5 @@ def get_lora_train(
         "status": train.status,
         "log": log_text,
         "samples": samples,
+        "run_dir": str(out),
     }
