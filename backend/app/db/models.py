@@ -78,6 +78,7 @@ class LoraTrainJob(SQLModel, table=True):
     __tablename__ = "lora_trains"
 
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
+    job_id: str | None = Field(default=None, index=True)
     dataset_id: str
     status: str = "queued"
     config_path: str

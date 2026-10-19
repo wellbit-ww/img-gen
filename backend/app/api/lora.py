@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -99,6 +100,34 @@ async def train_lora(
         "lines": [],
     }
     job_id, queue, notice = await create_job(
-        session, settings, "lora_train", params, quality="high"
+        session, settings, "lora_train", {**params, "train_id": train_id}, quality="high"
     )
+    train.job_id = job_id
+    session.add(train)
+    session.commit()
     return JobCreateResponse(job_id=job_id, queue=queue, notice=notice)
+
+
+@router.get("/train/{train_id}")
+def get_lora_train(
+    train_id: str,
+    session: Session = Depends(get_session),
+) -> dict:
+    train = session.get(LoraTrainJob, train_id)
+    if not train:
+        raise HTTPException(404, "Training job not found")
+    samples: list[str] = []
+    out = Path(train.output_path or "")
+    if out.is_dir():
+        samples = sorted(p.name for p in out.glob("*.png"))
+    log_path = out / "train.log"
+    log_text = train.log
+    if log_path.is_file():
+        log_text = log_path.read_text(encoding="utf-8", errors="replace")
+    return {
+        "id": train.id,
+        "job_id": train.job_id,
+        "status": train.status,
+        "log": log_text,
+        "samples": samples,
+    }

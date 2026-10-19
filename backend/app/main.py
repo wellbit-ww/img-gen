@@ -7,6 +7,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from app.api.auth import router as auth_router
 from app.api.deps import verify_api_key
 from app.api.gallery import router as gallery_router
 from app.api.generate import router as generate_router
@@ -39,6 +40,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(health_router, prefix="/api")
+    app.include_router(auth_router, prefix="/api")
     app.include_router(
         generate_router,
         prefix="/api",

@@ -14,7 +14,7 @@ from app.config import Settings
 from app.core.schemas import JobResponse, JobStatus
 from app.db.models import ImageRecord, JobRecord
 from app.db.session import get_session
-from app.services.events import job_channel, set_cancel_flag
+from app.services.events import fetch_job_events, job_channel, set_cancel_flag
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -55,15 +55,35 @@ async def cancel_job(
 async def job_events(
     job_id: str,
     settings: Settings = Depends(get_app_settings),
+    session: Session = Depends(get_session),
 ) -> StreamingResponse:
     async def event_stream():
+        history = await fetch_job_events(settings.redis_url, job_id)
+        if not history:
+            job = session.get(JobRecord, job_id)
+            if job and job.status in ("completed", "failed", "cancelled"):
+                images = session.exec(
+                    select(ImageRecord).where(ImageRecord.job_id == job_id)
+                ).all()
+                synthetic = {
+                    "type": "done" if job.status == "completed" else "error",
+                    "status": job.status,
+                    "image_ids": [img.id for img in images],
+                    "error": job.error,
+                }
+                yield f"data: {json.dumps(synthetic, ensure_ascii=False)}\n\n"
+                return
+        for event in history:
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+            if event.get("type") in ("done", "error"):
+                return
+            if event.get("type") == "status" and event.get("status") == "cancelled":
+                return
+
         client = redis.from_url(settings.redis_url)
         pubsub = client.pubsub()
         await pubsub.subscribe(job_channel(job_id))
         try:
-            last = await client.get(f"job:{job_id}:last")
-            if last:
-                yield f"data: {last.decode() if isinstance(last, bytes) else last}\n\n"
             while True:
                 message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
                 if message and message.get("type") == "message":

@@ -5,7 +5,8 @@ import zipfile
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
+from PIL import Image
 from sqlmodel import Session, col, select
 
 from app.api.deps import get_app_settings
@@ -22,7 +23,6 @@ def _to_meta(img: ImageRecord) -> ImageMeta:
     return ImageMeta(
         id=img.id,
         job_id=img.job_id,
-        path=img.path,
         url=f"/api/images/{img.id}",
         prompt=img.prompt,
         preset_id=img.preset_id,
@@ -62,6 +62,36 @@ def gallery(
         page=page,
         page_size=page_size,
     )
+
+
+@router.get("/images/{image_id}/export")
+def export_image(
+    image_id: str,
+    format: str = Query("png", pattern="^(png|jpeg|webp)$"),
+    width: int | None = Query(None, ge=64, le=3840),
+    height: int | None = Query(None, ge=64, le=2160),
+    session: Session = Depends(get_session),
+) -> Response:
+    img = session.get(ImageRecord, image_id)
+    if not img:
+        raise HTTPException(404, "Image not found")
+    path = Path(img.path)
+    if not path.exists():
+        raise HTTPException(404, "File missing")
+    image = Image.open(path)
+    if width and height:
+        image = image.resize((width, height), Image.Resampling.LANCZOS)
+    buf = io.BytesIO()
+    pil_format = {"png": "PNG", "jpeg": "JPEG", "webp": "WEBP"}[format]
+    if pil_format == "JPEG" and image.mode in ("RGBA", "P"):
+        image = image.convert("RGB")
+    image.save(buf, format=pil_format)
+    media = {
+        "png": "image/png",
+        "jpeg": "image/jpeg",
+        "webp": "image/webp",
+    }[format]
+    return Response(content=buf.getvalue(), media_type=media)
 
 
 @router.get("/images/{image_id}")

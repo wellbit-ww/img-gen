@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import re
+import uuid
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlmodel import Session
 
 from app.api.deps import get_app_settings
@@ -10,11 +12,11 @@ from app.config import Settings
 from app.core.presets import PresetStore, build_generation_params
 from app.core.schemas import (
     BatchRequest,
-    EditRequest,
     EnhancePromptRequest,
     EnhancePromptResponse,
     GenerateRequest,
     JobCreateResponse,
+    Quality,
     RemoveBgRequest,
     TextMode,
     UpscaleRequest,
@@ -112,32 +114,67 @@ async def batch_generate(
     return JobCreateResponse(job_id=job_id, queue=queue, notice=notice)
 
 
+async def _save_upload(
+    settings: Settings, upload: UploadFile, suffix: str
+) -> str:
+    folder = settings.data_dir / "uploads"
+    folder.mkdir(parents=True, exist_ok=True)
+    dest = folder / f"{uuid.uuid4()}{suffix}"
+    dest.write_bytes(await upload.read())
+    return str(dest)
+
+
 @router.post("/edit", response_model=JobCreateResponse)
 async def edit_image(
-    req: EditRequest,
     settings: Settings = Depends(get_app_settings),
     session: Session = Depends(get_session),
+    prompt: str = Form(...),
+    quality: Quality = Form(Quality.STANDARD),
+    strength: float = Form(0.75),
+    seed: int | None = Form(None),
+    image_id: str | None = Form(None),
+    reference_image_ids: str = Form(""),
+    image: UploadFile | None = File(None),
+    mask: UploadFile | None = File(None),
+    references: list[UploadFile] = File(default=[]),
 ) -> JobCreateResponse:
-    if not req.image_id:
-        raise HTTPException(400, "image_id required")
-    image = session.get(ImageRecord, req.image_id)
-    if not image:
-        raise HTTPException(404, "Image not found")
-    ref_paths = []
-    for rid in req.reference_image_ids:
+    image_path: str | None = None
+    if image_id:
+        record = session.get(ImageRecord, image_id)
+        if not record:
+            raise HTTPException(404, "Image not found")
+        image_path = record.path
+    elif image is not None:
+        suffix = Path(image.filename or "upload.png").suffix or ".png"
+        image_path = await _save_upload(settings, image, suffix)
+    else:
+        raise HTTPException(400, "Provide image_id or image upload")
+
+    ref_paths: list[str] = []
+    for rid in [x.strip() for x in reference_image_ids.split(",") if x.strip()]:
         ref = session.get(ImageRecord, rid)
         if ref:
             ref_paths.append(ref.path)
+    for ref_file in references[:10]:
+        suffix = Path(ref_file.filename or "ref.png").suffix or ".png"
+        ref_paths.append(await _save_upload(settings, ref_file, suffix))
+    ref_paths = ref_paths[:10]
+
+    mask_path: str | None = None
+    if mask is not None:
+        mask_path = await _save_upload(settings, mask, ".png")
+
     params = {
-        "prompt": req.prompt,
-        "image_path": image.path,
+        "prompt": prompt,
+        "image_path": image_path,
+        "mask_path": mask_path,
         "reference_paths": ref_paths,
-        "strength": req.strength,
-        "steps": 30 if req.quality.value != "draft" else 8,
-        "seed": req.seed,
+        "strength": strength,
+        "steps": 30 if quality.value != "draft" else 8,
+        "seed": seed,
     }
     job_id, queue, notice = await create_job(
-        session, settings, "edit", params, quality=req.quality.value
+        session, settings, "edit", params, quality=quality.value
     )
     return JobCreateResponse(job_id=job_id, queue=queue, notice=notice)
 
