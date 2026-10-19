@@ -3,10 +3,16 @@ workers:
     queues: [quality, edit]
     model: qwen-image-2.1
     memory: text_encoder_offload
+    tf32: true
+    vae_tiling: true
+    torch_compile: false
     enabled: true
   - gpu: 1
     queues: [draft, batch]
     model: qwen-image-2.1-turbo
+    memory: text_encoder_offload
+    tf32: true
+    vae_tiling: true
     enabled: true
   - gpu: 2
     queues: [alt, batch]

@@ -9,9 +9,11 @@ from app.engines.base import Capability, JobCancelled, StepCallback
 from app.engines.mock import MockEngine
 
 
-class FluxAltEngine:
-    """Optional FLUX Klein engine; falls back to mock when diffusers pipeline unavailable."""
+class FluxLoadError(RuntimeError):
+    pass
 
+
+class FluxAltEngine:
     name = "flux-alt"
     capabilities: set[Capability] = {"t2i", "edit", "rgba"}
     _fallback: MockEngine
@@ -22,21 +24,29 @@ class FluxAltEngine:
         self._fallback = MockEngine()
 
     def load(self) -> None:
-        try:
-            import torch
-            from diffusers import Flux2KleinPipeline
+        import torch
+        from diffusers import Flux2KleinPipeline
 
-            repo = "black-forest-labs/FLUX.2-klein-9B"
-            local = self._settings.models_dir / repo.replace("/", "__")
-            source = str(local) if local.exists() else repo
+        repo = "black-forest-labs/FLUX.2-klein-9B"
+        local = self._settings.models_dir / repo.replace("/", "__")
+        source = str(local) if local.exists() else repo
+        try:
             self._pipe = Flux2KleinPipeline.from_pretrained(
                 source,
                 torch_dtype=torch.bfloat16,
                 token=self._settings.hf_token,
             )
             self._pipe.to("cuda")
-        except Exception:
+        except Exception as exc:
+            if self._settings.engine_mode == "real":
+                raise FluxLoadError(f"Failed to load FLUX alt model: {exc}") from exc
             self._pipe = None
+
+    def _ensure(self) -> None:
+        if self._pipe is None:
+            if self._settings.engine_mode == "real":
+                raise FluxLoadError("FLUX pipeline not loaded")
+            self.load()
 
     def generate(
         self,
@@ -54,7 +64,7 @@ class FluxAltEngine:
         lora_id: str | None = None,
         lora_scale: float = 0.8,
     ) -> list[Image.Image]:
-        if self._pipe is None:
+        if self._settings.engine_mode == "mock" or self._pipe is None:
             return self._fallback.generate(
                 prompt,
                 width,
@@ -72,12 +82,18 @@ class FluxAltEngine:
 
         import torch
 
+        self._ensure()
         images: list[Image.Image] = []
         for i in range(num_images):
             if cancel_check():
                 raise JobCancelled()
             gen_seed = seed if seed is not None else random.randint(0, 2**31 - 1)
             generator = torch.Generator(device="cuda").manual_seed(gen_seed + i)
+
+            def _cb(_pipe, step, _ts, callback_kwargs):
+                on_step(step + 1, steps)
+                return callback_kwargs
+
             result = self._pipe(
                 prompt=prompt,
                 width=width,
@@ -85,9 +101,9 @@ class FluxAltEngine:
                 num_inference_steps=steps,
                 guidance_scale=guidance,
                 generator=generator,
+                callback_on_step_end=_cb,
             )
             images.extend(result.images)
-            on_step(steps, steps)
         return images
 
     def edit(
@@ -102,12 +118,20 @@ class FluxAltEngine:
         on_step: StepCallback,
         cancel_check: Callable[[], bool],
     ) -> list[Image.Image]:
+        if self._settings.engine_mode == "real":
+            raise FluxLoadError("FLUX edit not implemented")
         return self._fallback.edit(
             prompt, image, mask, references, strength, steps, seed, on_step, cancel_check
         )
 
     def upscale(self, image: Image.Image, target_w: int, target_h: int) -> Image.Image:
-        return self._fallback.upscale(image, target_w, target_h)
+        from app.engines.upscaler import upscale_image
+
+        return upscale_image(
+            image, target_w, target_h, self._settings.models_dir, self._settings.engine_mode
+        )
 
     def remove_background(self, image: Image.Image, method: str) -> Image.Image:
+        if self._settings.engine_mode == "real":
+            raise FluxLoadError("Use utils worker for background removal")
         return self._fallback.remove_background(image, method)

@@ -64,10 +64,14 @@ async def _run_gpu_workers_async(
     model: str,
     queues: list[str],
     memory: str,
+    worker_flags: dict[str, bool],
 ) -> None:
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu)
     os.environ["WORKER_MODEL"] = model
     os.environ["WORKER_MEMORY"] = memory
+    os.environ["WORKER_TF32"] = "1" if worker_flags.get("tf32", True) else "0"
+    os.environ["WORKER_VAE_TILING"] = "1" if worker_flags.get("vae_tiling", True) else "0"
+    os.environ["WORKER_TORCH_COMPILE"] = "1" if worker_flags.get("torch_compile", False) else "0"
 
     worker_id = f"gpu{gpu}-{model}"
     shared_ctx: dict[str, Any] = {
@@ -108,12 +112,15 @@ def _run_gpu_process(
     model: str,
     queues: list[str],
     memory: str,
+    worker_flags: dict[str, bool],
 ) -> None:
     from app.db.session import init_db
 
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     init_db(settings.db_path)
-    asyncio.run(_run_gpu_workers_async(settings, gpu, model, queues, memory))
+    asyncio.run(
+        _run_gpu_workers_async(settings, gpu, model, queues, memory, worker_flags)
+    )
 
 
 def run_supervisor(settings: Settings | None = None) -> None:
@@ -121,29 +128,38 @@ def run_supervisor(settings: Settings | None = None) -> None:
     worker_cfgs = load_workers_config(settings)
 
     grouped: dict[int, dict[str, Any]] = defaultdict(
-        lambda: {"model": "mock", "queues": [], "memory": "text_encoder_offload"}
+        lambda: {
+            "model": "mock",
+            "queues": [],
+            "memory": "text_encoder_offload",
+            "flags": {"tf32": True, "vae_tiling": True, "torch_compile": False},
+        }
     )
     for cfg in worker_cfgs:
         gpu = int(cfg.get("gpu", 0))
         grouped[gpu]["model"] = str(cfg.get("model", "mock"))
         grouped[gpu]["queues"].extend(cfg.get("queues", ["quality"]))
         grouped[gpu]["memory"] = str(cfg.get("memory", "text_encoder_offload"))
+        for flag in ("tf32", "vae_tiling", "torch_compile"):
+            if flag in cfg:
+                grouped[gpu]["flags"][flag] = bool(cfg[flag])
 
     jobs = [
-        (gpu, data["model"], data["queues"], data["memory"]) for gpu, data in grouped.items()
+        (gpu, data["model"], data["queues"], data["memory"], data["flags"])
+        for gpu, data in grouped.items()
     ]
 
     if len(jobs) == 1:
-        gpu, model, queues, memory = jobs[0]
-        _run_gpu_process(settings, gpu, model, queues, memory)
+        gpu, model, queues, memory, flags = jobs[0]
+        _run_gpu_process(settings, gpu, model, queues, memory, flags)
         return
 
     mp.set_start_method("spawn", force=True)
     processes: list[mp.Process] = []
-    for gpu, model, queues, memory in jobs:
+    for gpu, model, queues, memory, flags in jobs:
         p = mp.Process(
             target=_run_gpu_process,
-            args=(settings, gpu, model, queues, memory),
+            args=(settings, gpu, model, queues, memory, flags),
             daemon=False,
             name=f"worker-gpu{gpu}",
         )

@@ -1,3 +1,4 @@
+import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
@@ -27,6 +28,18 @@ class Settings(BaseSettings):
     fonts_dir: Path = Path("../assets/fonts")
     cors_origins: str = "http://localhost:5173,http://localhost:8000"
     brand_colors: str = "#0B3D91,#FFFFFF,#1E88E5"
+
+    @property
+    def worker_tf32(self) -> bool:
+        return os.getenv("WORKER_TF32", "1") == "1"
+
+    @property
+    def worker_vae_tiling(self) -> bool:
+        return os.getenv("WORKER_VAE_TILING", "1") == "1"
+
+    @property
+    def worker_torch_compile(self) -> bool:
+        return os.getenv("WORKER_TORCH_COMPILE", "0") == "1"
 
     @property
     def outputs_dir(self) -> Path:
