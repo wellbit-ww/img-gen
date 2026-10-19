@@ -23,6 +23,7 @@ from app.services.redis_sync import (
 )
 from app.services.storage import create_image_record, output_path_for_job, save_image
 from app.worker.engine_cache import engine_from_ctx
+from app.worker.gpu_lock import gpu_job_lock
 
 _settings = get_settings()
 _engine_db = create_db_engine(
@@ -31,16 +32,59 @@ _engine_db = create_db_engine(
 )
 
 
+def _should_abort_job(job_id: str) -> bool:
+    if _cancel_check(job_id):
+        _update_job(job_id, "cancelled")
+        return True
+    with Session(_engine_db) as session:
+        job = session.get(JobRecord, job_id)
+        if job and job.status == "cancelled":
+            return True
+    return False
+
+
 def _update_job(job_id: str, status: str, error: str | None = None) -> None:
     with Session(_engine_db) as session:
         job = session.get(JobRecord, job_id)
         if not job:
+            return
+        if job.status == "cancelled" and status != "cancelled":
             return
         job.status = status
         job.error = error
         job.updated_at = datetime.now(UTC)
         session.add(job)
         session.commit()
+
+
+def _maybe_finalize_batch(parent_id: str) -> None:
+    from sqlmodel import select
+
+    from app.services.redis_sync import get_sync_redis
+
+    client = get_sync_redis(_settings.redis_url)
+    total = int(client.get(batch_counter_key(parent_id, "total")) or 0)
+    if total <= 0:
+        return
+    done = int(client.get(batch_counter_key(parent_id, "done")) or 0)
+    failed = int(client.get(batch_counter_key(parent_id, "failed")) or 0)
+    if done + failed < total:
+        _publish(
+            parent_id,
+            {"type": "progress", "step": done + failed, "total": total},
+        )
+        return
+    if not client.set(f"batch:{parent_id}:finalized", "1", nx=True, ex=86400):
+        return
+    if failed:
+        _update_job(parent_id, "failed", f"Batch failed: {failed} line(s) errored")
+        _publish(parent_id, {"type": "error", "message": f"{failed} line(s) failed"})
+        return
+    with Session(_engine_db) as session:
+        rows = session.exec(select(ImageRecord).where(ImageRecord.job_id == parent_id)).all()
+        all_ids = [r.id for r in rows]
+    _update_job(parent_id, "completed")
+    _publish(parent_id, {"type": "done", "image_ids": all_ids})
 
 
 def _publish(job_id: str, event: dict[str, Any]) -> None:
@@ -129,22 +173,23 @@ def _generate_sync(
     def on_step(step: int, total: int) -> None:
         _publish(job_id, {"type": "progress", "step": step, "total": total})
 
-    engine = engine_from_ctx({**ctx, "model_key": model_key}, _settings)
-    images = engine.generate(
-        prompt=params["prompt"],
-        width=params["width"],
-        height=params["height"],
-        steps=params["steps"],
-        guidance=params["guidance"],
-        num_images=params["num_images"],
-        seed=params.get("seed"),
-        negative_prompt=params.get("negative_prompt", ""),
-        transparent=params.get("transparent", False),
-        on_step=on_step,
-        cancel_check=lambda: _cancel_check(job_id),
-        lora_id=params.get("lora_id"),
-        lora_scale=params.get("lora_scale", 0.8),
-    )
+    with gpu_job_lock():
+        engine = engine_from_ctx({**ctx, "model_key": model_key}, _settings)
+        images = engine.generate(
+            prompt=params["prompt"],
+            width=params["width"],
+            height=params["height"],
+            steps=params["steps"],
+            guidance=params["guidance"],
+            num_images=params["num_images"],
+            seed=params.get("seed"),
+            negative_prompt=params.get("negative_prompt", ""),
+            transparent=params.get("transparent", False),
+            on_step=on_step,
+            cancel_check=lambda: _cancel_check(job_id),
+            lora_id=params.get("lora_id"),
+            lora_scale=params.get("lora_scale", 0.8),
+        )
     return _save_images(job_id, images, params, params.get("prompt"))
 
 
@@ -153,6 +198,9 @@ async def _run_guarded(
     fn,
     *args,
 ) -> None:
+    if _should_abort_job(job_id):
+        _publish(job_id, {"type": "status", "status": "cancelled"})
+        return
     _update_job(job_id, "running")
     _publish(job_id, {"type": "status", "status": "running"})
     try:
@@ -191,21 +239,22 @@ async def process_edit(ctx: dict, job_id: str, payload: dict[str, Any]) -> None:
         def on_step(step: int, total: int) -> None:
             _publish(job_id, {"type": "progress", "step": step, "total": total})
 
-        engine = engine_from_ctx({**ctx, "model_key": model_key}, _settings)
-        base = Image.open(params["image_path"])
-        mask = Image.open(params["mask_path"]) if params.get("mask_path") else None
-        refs = [Image.open(p) for p in params.get("reference_paths", [])]
-        images = engine.edit(
-            prompt=params["prompt"],
-            image=base,
-            mask=mask,
-            references=refs,
-            strength=params.get("strength", 0.75),
-            steps=params.get("steps", 30),
-            seed=params.get("seed"),
-            on_step=on_step,
-            cancel_check=lambda: _cancel_check(job_id),
-        )
+        with gpu_job_lock():
+            engine = engine_from_ctx({**ctx, "model_key": model_key}, _settings)
+            base = Image.open(params["image_path"])
+            mask = Image.open(params["mask_path"]) if params.get("mask_path") else None
+            refs = [Image.open(p) for p in params.get("reference_paths", [])]
+            images = engine.edit(
+                prompt=params["prompt"],
+                image=base,
+                mask=mask,
+                references=refs,
+                strength=params.get("strength", 0.75),
+                steps=params.get("steps", 30),
+                seed=params.get("seed"),
+                on_step=on_step,
+                cancel_check=lambda: _cancel_check(job_id),
+            )
         return _save_images(job_id, images, params, params.get("prompt"))
 
     await _run_guarded(job_id, _edit_sync)
@@ -217,10 +266,11 @@ async def process_upscale(ctx: dict, job_id: str, payload: dict[str, Any]) -> No
     params = payload["params"]
 
     def _upscale_sync() -> list[str]:
-        engine = engine_from_ctx({**ctx, "model_key": "utils"}, _settings)
-        img = Image.open(params["image_path"])
-        tw, th = upscale_target_size(params.get("target", "4k"), img.width, img.height)
-        out = engine.upscale(img, tw, th)
+        with gpu_job_lock():
+            engine = engine_from_ctx({**ctx, "model_key": "utils"}, _settings)
+            img = Image.open(params["image_path"])
+            tw, th = upscale_target_size(params.get("target", "4k"), img.width, img.height)
+            out = engine.upscale(img, tw, th)
         return _save_images(job_id, [out], params, params.get("prompt"))
 
     await _run_guarded(job_id, _upscale_sync)
@@ -233,9 +283,10 @@ async def process_remove_bg(ctx: dict, job_id: str, payload: dict[str, Any]) -> 
     model_key = payload.get("model_key", "utils")
 
     def _bg_sync() -> list[str]:
-        engine = engine_from_ctx({**ctx, "model_key": model_key}, _settings)
-        img = Image.open(params["image_path"])
-        out = engine.remove_background(img, params.get("method", "auto"))
+        with gpu_job_lock():
+            engine = engine_from_ctx({**ctx, "model_key": model_key}, _settings)
+            img = Image.open(params["image_path"])
+            out = engine.remove_background(img, params.get("method", "auto"))
         return _save_images(job_id, [out], params, params.get("prompt"))
 
     await _run_guarded(job_id, _bg_sync)
@@ -255,13 +306,15 @@ async def process_batch_line(ctx: dict, job_id: str, payload: dict[str, Any]) ->
         params["overlay"] = overlay
         params["text_mode"] = TextMode.OVERLAY.value
 
+    if _should_abort_job(parent_id):
+        return
+
     model_key = payload.get("model_key", "mock")
+    from app.services.redis_sync import get_sync_redis
+
+    client = get_sync_redis(_settings.redis_url)
     try:
         ids = await asyncio.to_thread(_generate_sync, ctx, parent_id, params, model_key)
-        redis = _settings.redis_url
-        from app.services.redis_sync import get_sync_redis
-
-        client = get_sync_redis(redis)
         client.incr(batch_counter_key(parent_id, "done"))
         _publish(
             parent_id,
@@ -271,19 +324,26 @@ async def process_batch_line(ctx: dict, job_id: str, payload: dict[str, Any]) ->
                 "image_ids": ids,
             },
         )
+        _maybe_finalize_batch(parent_id)
+    except JobCancelled:
+        client.incr(batch_counter_key(parent_id, "failed"))
+        _maybe_finalize_batch(parent_id)
+        raise
     except Exception as exc:
-        from app.services.redis_sync import get_sync_redis
-
-        client = get_sync_redis(_settings.redis_url)
         client.incr(batch_counter_key(parent_id, "failed"))
         _publish(parent_id, {"type": "batch_line_error", "line": line_index, "message": str(exc)})
+        _maybe_finalize_batch(parent_id)
         raise
 
 
 async def process_batch(ctx: dict, job_id: str, payload: dict[str, Any]) -> None:
-    """Orchestrator: enqueue line jobs and wait for completion."""
+    """Orchestrator: enqueue line jobs; completion is aggregated in process_batch_line."""
     from app.services.queue import enqueue_job
     from app.services.redis_sync import get_sync_redis
+
+    if _should_abort_job(job_id):
+        _publish(job_id, {"type": "status", "status": "cancelled"})
+        return
 
     lines = payload["lines"]
     base_params = payload["params"]
@@ -297,9 +357,12 @@ async def process_batch(ctx: dict, job_id: str, payload: dict[str, Any]) -> None
     client.set(batch_counter_key(job_id, "total"), len(lines))
     client.set(batch_counter_key(job_id, "done"), 0)
     client.set(batch_counter_key(job_id, "failed"), 0)
+    client.delete(f"batch:{job_id}:finalized")
 
     try:
         for line_index, line in enumerate(lines):
+            if _cancel_check(job_id):
+                raise JobCancelled()
             line_payload = {
                 "parent_job_id": job_id,
                 "line_index": line_index,
@@ -315,36 +378,7 @@ async def process_batch(ctx: dict, job_id: str, payload: dict[str, Any]) -> None
                 line_payload,
                 "batch",
             )
-
-        total = len(lines)
-        while True:
-            if _cancel_check(job_id):
-                raise JobCancelled()
-            done = int(client.get(batch_counter_key(job_id, "done")) or 0)
-            failed = int(client.get(batch_counter_key(job_id, "failed")) or 0)
-            _publish(
-                job_id,
-                {
-                    "type": "progress",
-                    "step": done + failed,
-                    "total": total,
-                },
-            )
-            if done + failed >= total:
-                break
-            await asyncio.sleep(0.3)
-
-        if failed:
-            raise RuntimeError(f"Batch failed: {failed} line(s) errored")
-
-        from sqlmodel import select
-
-        with Session(_engine_db) as session:
-            rows = session.exec(select(ImageRecord).where(ImageRecord.job_id == job_id)).all()
-            all_ids = [r.id for r in rows]
-
-        _update_job(job_id, "completed")
-        _publish(job_id, {"type": "done", "image_ids": all_ids})
+        _publish(job_id, {"type": "progress", "step": 0, "total": len(lines)})
     except JobCancelled:
         _update_job(job_id, "cancelled")
         _publish(job_id, {"type": "status", "status": "cancelled"})
@@ -357,30 +391,16 @@ async def process_lora_train(ctx: dict, job_id: str, payload: dict[str, Any]) ->
     from app.db.models import LoraTrainJob
 
     train_id = payload.get("train_id", job_id)
-    _update_job(job_id, "running")
-    with Session(_engine_db) as session:
-        train = session.get(LoraTrainJob, train_id)
-        if train:
-            train.status = "running"
-            session.add(train)
-            session.commit()
-    try:
-        config_path = Path(payload["config_path"])
-        out_dir = Path(payload["output_dir"])
-        out_dir.mkdir(parents=True, exist_ok=True)
-        (out_dir / "README.txt").write_text(
-            f"Training config at {config_path}. Run ai-toolkit container to execute.",
-            encoding="utf-8",
-        )
+
+    def _fail() -> None:
+        msg = "Обучение LoRA не настроено: реализуйте блок D (trainer / ai-toolkit)."
         with Session(_engine_db) as session:
             train = session.get(LoraTrainJob, train_id)
             if train:
-                train.status = "completed"
-                train.output_path = str(out_dir)
+                train.status = "failed"
+                train.log = msg
                 session.add(train)
                 session.commit()
-        _update_job(job_id, "completed")
-        _publish(job_id, {"type": "done", "output": str(out_dir)})
-    except Exception as exc:
-        _update_job(job_id, "failed", str(exc))
-        _publish(job_id, {"type": "error", "message": str(exc)})
+        raise RuntimeError(msg)
+
+    await _run_guarded(job_id, _fail)

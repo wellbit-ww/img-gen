@@ -18,9 +18,13 @@ target_metadata = SQLModel.metadata
 
 
 def _database_url() -> str:
+    configured = config.get_main_option("sqlalchemy.url")
+    if configured and configured != "driver://user:pass@localhost/dbname":
+        return configured
     settings = get_settings()
     settings.data_dir.mkdir(parents=True, exist_ok=True)
-    return f"sqlite:///{settings.db_path}"
+    path = settings.db_path.expanduser().resolve()
+    return f"sqlite:///{path.as_posix()}"
 
 
 def run_migrations_offline() -> None:

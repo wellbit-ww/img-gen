@@ -16,7 +16,16 @@ def load_workers_config(settings: Settings) -> list[dict[str, Any]]:
         return [
             {
                 "gpu": 0,
-                "queues": ["quality", "draft", "edit", "batch", "upscale", "bgremove", "alt"],
+                "queues": [
+                    "quality",
+                    "draft",
+                    "edit",
+                    "batch",
+                    "batch_parent",
+                    "upscale",
+                    "bgremove",
+                    "alt",
+                ],
                 "model": "mock",
                 "enabled": True,
             }
@@ -27,7 +36,16 @@ def load_workers_config(settings: Settings) -> list[dict[str, Any]]:
         return [
             {
                 "gpu": 0,
-                "queues": ["quality", "draft", "edit", "batch", "upscale", "bgremove", "alt"],
+                "queues": [
+                    "quality",
+                    "draft",
+                    "edit",
+                    "batch",
+                    "batch_parent",
+                    "upscale",
+                    "bgremove",
+                    "alt",
+                ],
                 "model": "mock",
                 "enabled": True,
             }

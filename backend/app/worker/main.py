@@ -33,6 +33,8 @@ TASK_FUNCTIONS = [
     process_lora_train,
 ]
 
+ORCHESTRATOR_QUEUES = frozenset({"batch_parent"})
+
 
 async def _heartbeat(ctx: dict, busy: bool) -> None:
     settings = get_settings()
@@ -48,14 +50,6 @@ async def _heartbeat(ctx: dict, busy: bool) -> None:
             "busy": busy,
         },
     )
-
-
-async def _on_job_start(ctx: dict) -> None:
-    await _heartbeat(ctx, True)
-
-
-async def _on_job_end(ctx: dict) -> None:
-    await _heartbeat(ctx, False)
 
 
 async def _run_gpu_workers_async(
@@ -80,17 +74,51 @@ async def _run_gpu_workers_async(
         "model_key": model,
         "queues": queues,
         "engines": {},
+        "active_jobs": 0,
     }
+
+    heartbeat_task: asyncio.Task | None = None
+
+    async def heartbeat_loop(ctx: dict) -> None:
+        while True:
+            busy = int(ctx.get("active_jobs", 0)) > 0
+            await _heartbeat(ctx, busy)
+            await asyncio.sleep(10)
 
     async def startup(ctx: dict) -> None:
         for key, value in shared_ctx.items():
             ctx[key] = value
+        nonlocal heartbeat_task
+        heartbeat_task = asyncio.create_task(heartbeat_loop(ctx))
         await _heartbeat(ctx, False)
+
+    async def _on_job_start(ctx: dict) -> None:
+        ctx["active_jobs"] = int(ctx.get("active_jobs", 0)) + 1
+        await _heartbeat(ctx, True)
+
+    async def _on_job_end(ctx: dict) -> None:
+        ctx["active_jobs"] = max(0, int(ctx.get("active_jobs", 0)) - 1)
+        await _heartbeat(ctx, int(ctx.get("active_jobs", 0)) > 0)
 
     redis = await create_pool(RedisSettings.from_dsn(settings.redis_url))
     unique_queues = sorted(set(queues))
+    orchestrator = [q for q in unique_queues if q in ORCHESTRATOR_QUEUES]
+    gpu_queues = [q for q in unique_queues if q not in ORCHESTRATOR_QUEUES]
     tasks = []
-    for queue_name in unique_queues:
+    for queue_name in orchestrator:
+        worker = Worker(
+            functions=TASK_FUNCTIONS,
+            redis_settings=RedisSettings.from_dsn(settings.redis_url),
+            redis_pool=redis,
+            queue_name=queue_name,
+            max_jobs=8,
+            on_startup=startup,
+            on_job_start=_on_job_start,
+            on_job_end=_on_job_end,
+            ctx=shared_ctx,
+        )
+        tasks.append(asyncio.create_task(worker.main()))
+    for queue_name in gpu_queues:
         worker = Worker(
             functions=TASK_FUNCTIONS,
             redis_settings=RedisSettings.from_dsn(settings.redis_url),

@@ -18,3 +18,5 @@ frontend/dist/
 Thumbs.db
 benchmarks/*.json
 !benchmarks/.gitkeep
+backend/benchmarks/*.json
+!backend/benchmarks/.gitkeep
