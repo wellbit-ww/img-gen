@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends
 from app.api.deps import get_app_settings
 from app.config import Settings
 from app.core.schemas import HealthResponse
+from app.services.redis_sync import list_worker_heartbeats
 from app.services.workers_config import load_workers_config
 
 router = APIRouter(tags=["health"])
@@ -21,7 +22,9 @@ def health(settings: Settings = Depends(get_app_settings)) -> HealthResponse:
     except Exception:
         redis_ok = False
 
-    workers = load_workers_config(settings)
+    configured = load_workers_config(settings)
+    heartbeats = list_worker_heartbeats(settings.redis_url) if redis_ok else []
+    workers = heartbeats if heartbeats else configured
     return HealthResponse(
         status="ok" if redis_ok else "degraded",
         engine_mode=settings.engine_mode,

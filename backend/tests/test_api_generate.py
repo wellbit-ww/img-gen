@@ -6,7 +6,7 @@ import pytest
 @pytest.mark.asyncio
 async def test_enqueue_generate(client):
     with patch("app.api.generate.create_job", new_callable=AsyncMock) as mock_create:
-        mock_create.return_value = ("job-123", "draft")
+        mock_create.return_value = ("job-123", "draft", None)
         resp = client.post(
             "/api/generate",
             json={

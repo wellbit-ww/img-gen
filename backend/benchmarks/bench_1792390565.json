@@ -1,0 +1,5 @@
+{
+  "engine_mode": "mock",
+  "seconds": 0.17,
+  "note": "Replace with torch.cuda.max_memory_allocated on GPU server"
+}

@@ -2,6 +2,7 @@ workers:
   - gpu: 0
     queues: [quality, edit]
     model: qwen-image-2.1
+    memory: text_encoder_offload
     enabled: true
   - gpu: 1
     queues: [draft, batch]

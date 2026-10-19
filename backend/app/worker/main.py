@@ -1,15 +1,21 @@
 from __future__ import annotations
 
+import asyncio
 import multiprocessing as mp
 import os
+from collections import defaultdict
+from typing import Any
 
-from arq import Worker
+from arq import create_pool
 from arq.connections import RedisSettings
+from arq.worker import Worker
 
 from app.config import Settings, get_settings
+from app.services.redis_sync import set_worker_heartbeat
 from app.services.workers_config import load_workers_config
 from app.worker.tasks import (
     process_batch,
+    process_batch_line,
     process_edit,
     process_generate,
     process_lora_train,
@@ -23,49 +29,123 @@ TASK_FUNCTIONS = [
     process_upscale,
     process_remove_bg,
     process_batch,
+    process_batch_line,
     process_lora_train,
 ]
 
 
-def _run_single_worker(settings: Settings, gpu: int, model: str, queue_name: str) -> None:
+async def _heartbeat(ctx: dict, busy: bool) -> None:
+    settings = get_settings()
+    worker_id = str(ctx.get("worker_id", "unknown"))
+    set_worker_heartbeat(
+        settings.redis_url,
+        worker_id,
+        {
+            "worker_id": worker_id,
+            "gpu": ctx.get("gpu"),
+            "model": ctx.get("model_key"),
+            "queues": ctx.get("queues", []),
+            "busy": busy,
+        },
+    )
+
+
+async def _on_job_start(ctx: dict) -> None:
+    await _heartbeat(ctx, True)
+
+
+async def _on_job_end(ctx: dict) -> None:
+    await _heartbeat(ctx, False)
+
+
+async def _run_gpu_workers_async(
+    settings: Settings,
+    gpu: int,
+    model: str,
+    queues: list[str],
+    memory: str,
+) -> None:
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu)
+    os.environ["WORKER_MODEL"] = model
+    os.environ["WORKER_MEMORY"] = memory
+
+    worker_id = f"gpu{gpu}-{model}"
+    shared_ctx: dict[str, Any] = {
+        "worker_id": worker_id,
+        "gpu": gpu,
+        "model_key": model,
+        "queues": queues,
+        "engines": {},
+    }
+
+    async def startup(ctx: dict) -> None:
+        for key, value in shared_ctx.items():
+            ctx[key] = value
+        await _heartbeat(ctx, False)
+
+    redis = await create_pool(RedisSettings.from_dsn(settings.redis_url))
+    unique_queues = sorted(set(queues))
+    tasks = []
+    for queue_name in unique_queues:
+        worker = Worker(
+            functions=TASK_FUNCTIONS,
+            redis_settings=RedisSettings.from_dsn(settings.redis_url),
+            redis_pool=redis,
+            queue_name=queue_name,
+            max_jobs=1,
+            on_startup=startup,
+            on_job_start=_on_job_start,
+            on_job_end=_on_job_end,
+            ctx=shared_ctx,
+        )
+        tasks.append(asyncio.create_task(worker.main()))
+    await asyncio.gather(*tasks)
+
+
+def _run_gpu_process(
+    settings: Settings,
+    gpu: int,
+    model: str,
+    queues: list[str],
+    memory: str,
+) -> None:
     from app.db.session import init_db
 
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     init_db(settings.db_path)
-    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu)
-    os.environ["WORKER_MODEL"] = model
-    worker = Worker(
-        functions=TASK_FUNCTIONS,
-        redis_settings=RedisSettings.from_dsn(settings.redis_url),
-        queue_name=queue_name,
-        max_jobs=1,
-    )
-    worker.run()
+    asyncio.run(_run_gpu_workers_async(settings, gpu, model, queues, memory))
 
 
 def run_supervisor(settings: Settings | None = None) -> None:
     settings = settings or get_settings()
     worker_cfgs = load_workers_config(settings)
-    jobs: list[tuple[int, str, str]] = []
+
+    grouped: dict[int, dict[str, Any]] = defaultdict(
+        lambda: {"model": "mock", "queues": [], "memory": "text_encoder_offload"}
+    )
     for cfg in worker_cfgs:
         gpu = int(cfg.get("gpu", 0))
-        model = str(cfg.get("model", "mock"))
-        for queue in cfg.get("queues", ["quality"]):
-            jobs.append((gpu, model, queue))
+        grouped[gpu]["model"] = str(cfg.get("model", "mock"))
+        grouped[gpu]["queues"].extend(cfg.get("queues", ["quality"]))
+        grouped[gpu]["memory"] = str(cfg.get("memory", "text_encoder_offload"))
+
+    jobs = [
+        (gpu, data["model"], data["queues"], data["memory"]) for gpu, data in grouped.items()
+    ]
 
     if len(jobs) == 1:
-        gpu, model, queue = jobs[0]
-        _run_single_worker(settings, gpu, model, queue)
+        gpu, model, queues, memory = jobs[0]
+        _run_gpu_process(settings, gpu, model, queues, memory)
         return
 
     mp.set_start_method("spawn", force=True)
     processes: list[mp.Process] = []
-    for gpu, model, queue in jobs:
+    for gpu, model, queues, memory in jobs:
         p = mp.Process(
-            target=_run_single_worker,
-            args=(settings, gpu, model, queue),
+            target=_run_gpu_process,
+            args=(settings, gpu, model, queues, memory),
             daemon=False,
-            name=f"worker-gpu{gpu}-{queue}",
+            name=f"worker-gpu{gpu}",
         )
         p.start()
         processes.append(p)

@@ -38,6 +38,7 @@ class ImageRecord(SQLModel, table=True):
     id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
     job_id: str = Field(index=True)
     path: str
+    source_path: str | None = None
     prompt: str | None = None
     preset_id: str | None = None
     seed: int | None = None

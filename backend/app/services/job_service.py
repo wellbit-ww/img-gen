@@ -25,14 +25,21 @@ async def create_job(
     params: dict[str, Any],
     quality: str = "standard",
     model_choice: str = "auto",
-) -> tuple[str, str]:
-    queue = pick_queue(job_type, quality, model_choice)
-    # Fallback if queue not configured
+) -> tuple[str, str, str | None]:
+    requested_queue = pick_queue(job_type, quality, model_choice)
+    queue = requested_queue
+    notice: str | None = None
     configured_queues = set()
     for w in load_workers_config(settings):
         configured_queues.update(w.get("queues", []))
     if queue not in configured_queues:
-        queue = "quality" if "quality" in configured_queues else next(iter(configured_queues), "draft")
+        fallback = (
+            "quality"
+            if "quality" in configured_queues
+            else next(iter(configured_queues), "draft")
+        )
+        notice = f"Queue '{queue}' is not configured; using '{fallback}'."
+        queue = fallback
 
     job_id = str(uuid4())
     job = JobRecord(
@@ -56,9 +63,10 @@ async def create_job(
         "remove_bg": "process_remove_bg",
         "batch": "process_batch",
         "lora_train": "process_lora_train",
+        "batch_line": "process_batch_line",
     }
     fn = fn_map[job_type]
     if job_type == "batch":
         payload["lines"] = params_payload.pop("lines", [])
     await enqueue_job(settings, fn, job_id, payload, queue)
-    return job_id, queue
+    return job_id, queue, notice

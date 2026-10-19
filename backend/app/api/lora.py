@@ -98,5 +98,7 @@ async def train_lora(
         "output_dir": str(out_dir),
         "lines": [],
     }
-    job_id, queue = await create_job(session, settings, "lora_train", params, quality="high")
-    return JobCreateResponse(job_id=job_id, queue=queue)
+    job_id, queue, notice = await create_job(
+        session, settings, "lora_train", params, quality="high"
+    )
+    return JobCreateResponse(job_id=job_id, queue=queue, notice=notice)

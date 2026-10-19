@@ -115,6 +115,7 @@ class EnhancePromptResponse(BaseModel):
 class JobCreateResponse(BaseModel):
     job_id: str
     queue: str | None = None
+    notice: str | None = None
 
 
 class JobStatus(StrEnum):

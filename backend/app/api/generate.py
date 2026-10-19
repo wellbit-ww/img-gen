@@ -70,7 +70,7 @@ async def generate(
 
     params = build_generation_params(req, preset, settings.brand_color_list)
     params["original_prompt"] = req.prompt
-    job_id, queue = await create_job(
+    job_id, queue, notice = await create_job(
         session,
         settings,
         "generate",
@@ -78,7 +78,7 @@ async def generate(
         quality=req.quality.value,
         model_choice=req.model.value,
     )
-    return JobCreateResponse(job_id=job_id, queue=queue)
+    return JobCreateResponse(job_id=job_id, queue=queue, notice=notice)
 
 
 @router.post("/batch", response_model=JobCreateResponse)
@@ -99,14 +99,14 @@ async def batch_generate(
     preset = store.get(req.preset_id)
     params = build_generation_params(gen, preset, settings.brand_color_list)
     params["lines"] = [line.model_dump() for line in req.lines]
-    job_id, queue = await create_job(
+    job_id, queue, notice = await create_job(
         session,
         settings,
         "batch",
         params,
         quality=req.quality.value,
     )
-    return JobCreateResponse(job_id=job_id, queue=queue)
+    return JobCreateResponse(job_id=job_id, queue=queue, notice=notice)
 
 
 @router.post("/edit", response_model=JobCreateResponse)
@@ -133,8 +133,10 @@ async def edit_image(
         "steps": 30 if req.quality.value != "draft" else 8,
         "seed": req.seed,
     }
-    job_id, queue = await create_job(session, settings, "edit", params, quality=req.quality.value)
-    return JobCreateResponse(job_id=job_id, queue=queue)
+    job_id, queue, notice = await create_job(
+        session, settings, "edit", params, quality=req.quality.value
+    )
+    return JobCreateResponse(job_id=job_id, queue=queue, notice=notice)
 
 
 @router.post("/upscale", response_model=JobCreateResponse)
@@ -151,8 +153,8 @@ async def upscale(
         "target": req.target,
         "prompt": image.prompt,
     }
-    job_id, queue = await create_job(session, settings, "upscale", params, quality="high")
-    return JobCreateResponse(job_id=job_id, queue=queue)
+    job_id, queue, notice = await create_job(session, settings, "upscale", params, quality="high")
+    return JobCreateResponse(job_id=job_id, queue=queue, notice=notice)
 
 
 @router.post("/remove-bg", response_model=JobCreateResponse)
@@ -169,8 +171,10 @@ async def remove_bg(
         "method": req.method,
         "prompt": image.prompt,
     }
-    job_id, queue = await create_job(session, settings, "remove_bg", params, quality="standard")
-    return JobCreateResponse(job_id=job_id, queue=queue)
+    job_id, queue, notice = await create_job(
+        session, settings, "remove_bg", params, quality="standard"
+    )
+    return JobCreateResponse(job_id=job_id, queue=queue, notice=notice)
 
 
 @router.post("/enhance-prompt", response_model=EnhancePromptResponse)

@@ -41,6 +41,7 @@ def create_image_record(
     preset_id: str | None = None,
     seed: int | None = None,
     has_overlay: bool = False,
+    source_path: str | None = None,
 ) -> ImageRecord:
     with Image.open(path) as img:
         w, h = img.size
@@ -48,6 +49,7 @@ def create_image_record(
         id=str(uuid4()),
         job_id=job_id,
         path=str(path),
+        source_path=source_path or str(path),
         prompt=prompt,
         preset_id=preset_id,
         seed=seed,
