@@ -1,0 +1,15 @@
+id: isometric-3d
+name: "Изометрическая схема"
+default_aspect: "16:9"
+transparent: false
+text_mode: none
+description: "Изометрические иллюстрации для архитектурных слайдов"
+prompt_template: >
+  {subject}. Isometric 3D diagram for a business presentation, clean lines,
+  soft shadows, palette {palette}, white or light background.
+negative: "text, watermark, messy"
+steps:
+  draft: 8
+  standard: 30
+  high: 45
+guidance: 4.0

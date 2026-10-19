@@ -1,0 +1,15 @@
+FROM nvidia/cuda:12.9.0-cudnn-devel-ubuntu24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git python3.12 python3.12-venv python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt
+RUN git clone --depth 1 https://github.com/ostris/ai-toolkit.git
+
+WORKDIR /opt/ai-toolkit
+RUN pip3 install --no-cache-dir -r requirements.txt || true
+
+ENV PATH="/opt/ai-toolkit:$PATH"
+CMD ["bash", "-c", "echo Mount dataset config and run train script; sleep infinity"]

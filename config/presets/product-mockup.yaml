@@ -1,0 +1,15 @@
+id: product-mockup
+name: "Мокап продукта"
+default_aspect: "16:9"
+transparent: false
+text_mode: overlay
+description: "Устройство с экраном для демонстрации UI"
+prompt_template: >
+  {subject}. Laptop and phone mockup on a desk, screen area left neutral for UI,
+  studio lighting, corporate presentation style, palette {palette}.
+negative: "text on screen, watermark"
+steps:
+  draft: 8
+  standard: 30
+  high: 45
+guidance: 4.0

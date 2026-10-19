@@ -1,0 +1,54 @@
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    env_file:
+      - .env
+    environment:
+      ENGINE_MODE: mock
+      REDIS_URL: redis://redis:6379
+      DATA_DIR: /data
+      PRESETS_DIR: /config/presets
+      WORKERS_CONFIG: /config/workers.yaml
+      FONTS_DIR: /assets/fonts
+    volumes:
+      - app_data:/data
+      - ./config:/config:ro
+      - ./assets:/assets:ro
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.api
+    command: ["img-gen-worker"]
+    env_file:
+      - .env
+    environment:
+      ENGINE_MODE: mock
+      REDIS_URL: redis://redis:6379
+      DATA_DIR: /data
+      PRESETS_DIR: /config/presets
+      WORKERS_CONFIG: /config/workers.yaml
+      FONTS_DIR: /assets/fonts
+    volumes:
+      - app_data:/data
+      - ./config:/config:ro
+      - ./assets:/assets:ro
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+volumes:
+  app_data:

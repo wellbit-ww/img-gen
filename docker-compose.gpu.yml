@@ -1,0 +1,72 @@
+services:
+  api:
+    environment:
+      ENGINE_MODE: real
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.worker
+    environment:
+      ENGINE_MODE: real
+      MODELS_DIR: /models
+    volumes:
+      - models_data:/models
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    shm_size: "16gb"
+
+  ollama:
+    image: ollama/ollama:latest
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "3"
+      OLLAMA_KEEP_ALIVE: 10m
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+              device_ids: ["3"]
+    restart: unless-stopped
+
+  trainer:
+    profiles: [training]
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.trainer
+    volumes:
+      - models_data:/models
+      - app_data:/data
+      - ./config:/config:ro
+    environment:
+      NVIDIA_VISIBLE_DEVICES: "3"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+              device_ids: ["3"]
+
+volumes:
+  ollama_data:
+  models_data:

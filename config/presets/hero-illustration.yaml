@@ -1,0 +1,16 @@
+id: hero-illustration
+name: "Обложка проекта"
+default_aspect: "16:9"
+transparent: false
+text_mode: overlay
+free_side: center
+description: "Яркая иллюстрация для титульного слайда"
+prompt_template: >
+  {subject}. Hero illustration for a technology project presentation cover,
+  cinematic lighting, polished digital art, palette {palette}, space for title overlay.
+negative: "watermark, blurry, low quality, text"
+steps:
+  draft: 8
+  standard: 35
+  high: 50
+guidance: 4.5

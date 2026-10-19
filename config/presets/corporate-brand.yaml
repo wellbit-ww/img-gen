@@ -1,0 +1,17 @@
+id: corporate-brand
+name: "Фирменный стиль"
+default_aspect: "16:9"
+transparent: false
+text_mode: overlay
+free_side: left
+lora_id: null
+description: "Слайды в корпоративной палитре (подключите LoRA после обучения)"
+prompt_template: >
+  {subject}. Corporate branded presentation visual, strict color palette {palette},
+  minimal layout, premium consulting style, negative space for title on the left.
+negative: "off-brand colors, watermark, clutter text"
+steps:
+  draft: 8
+  standard: 30
+  high: 50
+guidance: 4.0

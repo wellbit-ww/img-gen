@@ -1,0 +1,113 @@
+:root {
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  color: #e8eaed;
+  background: #0f1115;
+}
+
+.layout {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1rem 1.5rem 3rem;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 1rem;
+}
+
+.health {
+  font-size: 0.85rem;
+  color: #9aa0a6;
+}
+
+nav {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+
+nav button {
+  background: #1a1d24;
+  border: 1px solid #2a2f3a;
+  color: inherit;
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+nav button.active {
+  background: #1e88e5;
+  border-color: #1e88e5;
+}
+
+.panel label {
+  display: block;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+}
+
+.panel textarea,
+.panel input,
+.panel select {
+  width: 100%;
+  margin-top: 0.35rem;
+  padding: 0.5rem;
+  border-radius: 6px;
+  border: 1px solid #2a2f3a;
+  background: #1a1d24;
+  color: inherit;
+  box-sizing: border-box;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 1rem;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.actions {
+  display: flex;
+  gap: 0.75rem;
+  margin: 1rem 0;
+}
+
+button.primary {
+  background: #1e88e5;
+  border: none;
+  color: #fff;
+  padding: 0.6rem 1.2rem;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.progress {
+  color: #8ab4f8;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.grid img {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid #2a2f3a;
+}
+
+.grid figcaption {
+  font-size: 0.75rem;
+  color: #9aa0a6;
+  margin-top: 0.25rem;
+}

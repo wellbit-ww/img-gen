@@ -1,0 +1,16 @@
+id: infographic
+name: "Инфографика"
+default_aspect: "4:3"
+transparent: false
+text_mode: overlay
+free_side: top
+description: "Визуальная инфографика с зоной для подписей"
+prompt_template: >
+  {subject}. Professional infographic layout for slides, charts and icons,
+  palette {palette}, clear hierarchy, empty area on top for headings, no embedded text.
+negative: "gibberish text, watermark, cluttered"
+steps:
+  draft: 8
+  standard: 35
+  high: 50
+guidance: 4.0

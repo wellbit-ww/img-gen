@@ -1,0 +1,17 @@
+workers:
+  - gpu: 0
+    queues: [quality, edit]
+    model: qwen-image-2.1
+    enabled: true
+  - gpu: 1
+    queues: [draft, batch]
+    model: qwen-image-2.1-turbo
+    enabled: true
+  - gpu: 2
+    queues: [alt, batch]
+    model: flux-alt
+    enabled: false
+  - gpu: 3
+    queues: [upscale, bgremove]
+    model: utils
+    enabled: true

@@ -1,0 +1,15 @@
+id: icon-set
+name: "Иконки"
+default_aspect: "1:1"
+transparent: true
+text_mode: none
+description: "Плоские иконки с прозрачным фоном"
+prompt_template: >
+  {subject}. Flat modern icon set style, consistent stroke width, palette {palette},
+  simple shapes, presentation-ready, centered composition.
+negative: "text, photo, realistic, shadow clutter"
+steps:
+  draft: 8
+  standard: 25
+  high: 40
+guidance: 3.5

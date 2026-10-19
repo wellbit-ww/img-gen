@@ -1,0 +1,15 @@
+id: photo-realistic
+name: "Фотореализм"
+default_aspect: "16:9"
+transparent: false
+text_mode: none
+description: "Реалистичные фото для слайдов"
+prompt_template: >
+  {subject}. Photorealistic stock photo style for corporate presentation,
+  natural lighting, shallow depth of field, professional, palette accents {palette}.
+negative: "cartoon, watermark, text"
+steps:
+  draft: 8
+  standard: 35
+  high: 50
+guidance: 4.5
