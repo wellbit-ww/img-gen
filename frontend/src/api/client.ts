@@ -21,11 +21,20 @@ export async function apiFetch(path: string, init?: RequestInit): Promise<Respon
   return res
 }
 
+export class ApiError extends Error {
+  status: number
+
+  constructor(status: number, message: string) {
+    super(message)
+    this.status = status
+  }
+}
+
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await apiFetch(path, init)
   if (!res.ok) {
     const text = await res.text()
-    throw new Error(text || res.statusText)
+    throw new ApiError(res.status, text || res.statusText)
   }
   if (res.status === 204) {
     return undefined as T

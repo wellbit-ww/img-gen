@@ -85,7 +85,7 @@ def apply_overlay(image: Image.Image, overlay: OverlaySpec, fonts_dir: Path) -> 
         overlay.font,
         fonts_dir,
         max_text_width,
-        max(24, base.width // 28),
+        max(24, base.width // 20),
     )
     subtitle_font = _fit_font_size(
         draw,
@@ -120,10 +120,13 @@ def apply_overlay(image: Image.Image, overlay: OverlaySpec, fonts_dir: Path) -> 
         x0, y0 = margin, base.height - block_h - margin
 
     pad = margin // 2
-    draw.rectangle(
+    shade = Image.new("RGBA", base.size, (0, 0, 0, 0))
+    ImageDraw.Draw(shade).rectangle(
         [x0 - pad, y0 - pad, x0 + block_w, y0 + block_h],
         fill=(0, 0, 0, 120),
     )
+    base = Image.alpha_composite(base, shade)
+    draw = ImageDraw.Draw(base)
 
     y = y0
     for line in title_lines:

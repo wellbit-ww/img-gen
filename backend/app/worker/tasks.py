@@ -399,6 +399,8 @@ async def process_lora_train(ctx: dict, job_id: str, payload: dict[str, Any]) ->
     train_id = str(params.get("train_id", job_id))
 
     def _train() -> None:
-        execute_lora_training(_settings, train_id, job_id, params)
+        execute_lora_training(
+            _settings, train_id, job_id, params, cancel_check=lambda: _cancel_check(job_id)
+        )
 
     await _run_guarded(job_id, _train)

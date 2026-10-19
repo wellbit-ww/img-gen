@@ -21,6 +21,7 @@ def _alembic_config(db_path: Path) -> Config:
     ini_path = Path(__file__).resolve().parents[2] / "alembic.ini"
     cfg = Config(str(ini_path))
     cfg.set_main_option("sqlalchemy.url", _sqlite_url(db_path))
+    cfg.attributes["configure_logger"] = False
     return cfg
 
 

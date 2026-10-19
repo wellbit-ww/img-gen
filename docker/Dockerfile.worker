@@ -2,8 +2,8 @@ FROM nvidia/cuda:12.9.0-cudnn-runtime-ubuntu24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.12 python3.12-venv python3-pip \
-    libgl1 libglib2.0-0 git \
+    python3.12 python3.12-venv \
+    libgl1 libglib2.0-0 git ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app/backend
@@ -12,18 +12,18 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 COPY backend/ ./
 
-RUN uv sync --frozen --no-dev --extra gpu
+RUN uv sync --frozen --no-dev --extra gpu --python /usr/bin/python3.12
 
 COPY config /config
 COPY scripts /scripts
 
 RUN useradd -m -u 10001 -s /bin/bash appuser \
-    && chown -R appuser:appuser /app
+    && mkdir -p /data /models \
+    && chown -R appuser:appuser /app /data /models
 
 ENV PATH="/app/backend/.venv/bin:$PATH"
 ENV PYTHONPATH=/app/backend
 ENV HF_HOME=/models/hf
-ENV IMG_GEN_ROOT=/app
 ENV WORKERS_CONFIG=/config/workers.yaml
 ENV PRESETS_DIR=/config/presets
 

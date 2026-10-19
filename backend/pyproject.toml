@@ -27,6 +27,7 @@ gpu = [
     "safetensors>=0.5.3",
     "spandrel>=0.4.1",
     "torch>=2.8.0",
+    "torchvision>=0.23.0",
     "transformers>=5.17.0",
     "peft>=0.15.0",
     "torchao>=0.10.0",
@@ -39,6 +40,7 @@ explicit = true
 
 [tool.uv.sources]
 torch = { index = "pytorch-cu128" }
+torchvision = { index = "pytorch-cu128" }
 diffusers = { git = "https://github.com/huggingface/diffusers.git", rev = "b800f828f3951c4d206e154411bcbfa693cd322e" }
 
 [tool.hatch.metadata]

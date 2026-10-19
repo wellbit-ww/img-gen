@@ -19,6 +19,7 @@ workers:
     model: flux-alt
     enabled: false
   - gpu: 3
-    queues: [upscale, bgremove]
+    # batch_parent and lora are lightweight orchestrator queues (no GPU work, max_jobs=8)
+    queues: [upscale, bgremove, batch_parent, lora]
     model: utils
     enabled: true

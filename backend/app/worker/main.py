@@ -11,6 +11,7 @@ from arq.connections import RedisSettings
 from arq.worker import Worker
 
 from app.config import Settings, get_settings
+from app.logging_setup import configure_logging
 from app.services.redis_sync import set_worker_heartbeat
 from app.services.workers_config import load_workers_config
 from app.worker.tasks import (
@@ -33,7 +34,7 @@ TASK_FUNCTIONS = [
     process_lora_train,
 ]
 
-ORCHESTRATOR_QUEUES = frozenset({"batch_parent"})
+ORCHESTRATOR_QUEUES = frozenset({"batch_parent", "lora"})
 
 
 async def _heartbeat(ctx: dict, busy: bool) -> None:
@@ -144,6 +145,7 @@ def _run_gpu_process(
 ) -> None:
     from app.db.session import init_db
 
+    configure_logging()
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     init_db(settings.db_path)
     asyncio.run(

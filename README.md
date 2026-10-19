@@ -57,8 +57,8 @@ uv run ruff check .
 | PyTorch на RTX 5090 | CUDA 12.8+ и wheels `cu128` |
 | Кириллица на картинке | Режим **overlay** (текст через Pillow) |
 | Медленная загрузка моделей | Именованный Docker-том `models_data`, не NTFS bind-mount |
-| LoRA сразу падает | Нужен `ENGINE_MODE=real`, Docker и `docker compose run trainer` |
-| Нет шрифта в overlay | Положите `Inter-Regular.ttf` / `Inter-Bold.ttf` в `assets/fonts` |
+| LoRA сразу падает | Нужен `ENGINE_MODE=real` и запущенный сервис trainer: `docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile training up -d trainer` |
+| «Улучшить» возвращает исходный промпт | Ollama недоступна или не скачана модель `qwen3-vl:8b`; причина показана под кнопками |
 
 ## Структура
 

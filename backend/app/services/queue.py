@@ -35,6 +35,8 @@ def pick_queue(job_type: str, quality: str, model: str = "auto") -> str:
         return "edit"
     if job_type == "batch":
         return "batch_parent"
+    if job_type == "lora_train":
+        return "lora"
     if quality == "draft":
         return "draft"
     if model == "alt":

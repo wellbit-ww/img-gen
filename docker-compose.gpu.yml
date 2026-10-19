@@ -1,19 +1,27 @@
+# Production override for the GPU server:
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
 services:
   api:
     environment:
       ENGINE_MODE: real
       OLLAMA_URL: http://ollama:11434
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/api/health || exit 1"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
+    volumes:
+      - models_data:/models:ro
+    depends_on:
+      ollama:
+        condition: service_started
 
   worker:
     build:
       context: .
       dockerfile: docker/Dockerfile.worker
+    environment:
+      ENGINE_MODE: real
+      MODELS_DIR: /models
+      OLLAMA_URL: http://ollama:11434
+      HF_HOME: /models/hf
+    volumes:
+      - models_data:/models
     shm_size: "16gb"
     deploy:
       resources:
@@ -22,39 +30,12 @@ services:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-    environment:
-      ENGINE_MODE: real
-      MODELS_DIR: /models
-      OLLAMA_URL: http://ollama:11434
-      IMG_GEN_ROOT: /app/repo
-    volumes:
-      - models_data:/models
-      - app_data:/data
-      - ./config:/config:ro
-      - ./scripts:/scripts:ro
-      - .:/app/repo:ro
     healthcheck:
-      test:
-        [
-          "CMD-SHELL",
-          "python -c \"import redis; redis.from_url('${REDIS_URL}').ping()\" || exit 1",
-        ]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 40s
-
-  redis:
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
+      start_period: 300s
 
   ollama:
     image: ollama/ollama:latest
     environment:
-      NVIDIA_VISIBLE_DEVICES: "3"
       OLLAMA_KEEP_ALIVE: 10m
     volumes:
       - ollama_data:/root/.ollama
@@ -65,11 +46,10 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              count: 1
-              capabilities: [gpu]
               device_ids: ["3"]
+              capabilities: [gpu]
     healthcheck:
-      test: ["CMD-SHELL", "ollama list >/dev/null 2>&1 || exit 1"]
+      test: ["CMD", "ollama", "list"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -84,20 +64,20 @@ services:
     volumes:
       - models_data:/models
       - app_data:/data
-      - ./config:/config:ro
-      - ./scripts:/scripts:ro
     environment:
-      NVIDIA_VISIBLE_DEVICES: "3"
       HF_HOME: /models/hf
+      HF_TOKEN: ${HF_TOKEN:-}
+    shm_size: "16gb"
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
-              count: 1
-              capabilities: [gpu]
               device_ids: ["3"]
+              capabilities: [gpu]
+    restart: unless-stopped
 
 volumes:
-  ollama_data:
   models_data:
+    name: models_data
+  ollama_data:

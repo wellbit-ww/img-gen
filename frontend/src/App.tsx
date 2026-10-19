@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Moon, Sun } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 
-import { api, subscribeJobEvents, type ImageMeta, type Preset } from './api/client'
+import { api, ApiError, subscribeJobEvents, type ImageMeta, type Preset } from './api/client'
 import { LoginGate } from './components/LoginGate'
 import { Button } from './components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from './components/ui/card'
@@ -71,6 +71,7 @@ export default function App() {
   const [editImageId, setEditImageId] = useState('')
   const [editPrompt, setEditPrompt] = useState('Замени фон на современный офис')
   const [editQuality, setEditQuality] = useState('standard')
+  const [enhanceNotice, setEnhanceNotice] = useState<string | null>(null)
 
   const theme = useThemeStore((s) => s.theme)
   const toggleTheme = useThemeStore((s) => s.toggle)
@@ -106,8 +107,7 @@ export default function App() {
     api<Preset[]>('/api/presets')
       .then(() => setAuthed(true))
       .catch((err) => {
-        if (String(err).includes('401')) setAuthed(false)
-        else setAuthed(true)
+        setAuthed(!(err instanceof ApiError && err.status === 401))
       })
   }, [])
 
@@ -144,12 +144,15 @@ export default function App() {
 
   const enhanceMutation = useMutation({
     mutationFn: async () => {
-      const res = await api<{ prompt: string; warning?: string }>('/api/enhance-prompt', {
-        method: 'POST',
-        body: JSON.stringify({ prompt, preset_id: presetId, aspect_ratio: aspect }),
-      })
+      const res = await api<{ prompt: string; warning?: string | null; notes?: string | null }>(
+        '/api/enhance-prompt',
+        {
+          method: 'POST',
+          body: JSON.stringify({ prompt, preset_id: presetId, aspect_ratio: aspect }),
+        },
+      )
       setPrompt(res.prompt)
-      if (res.warning) alert(res.warning)
+      setEnhanceNotice([res.warning, res.notes].filter(Boolean).join(' ') || null)
     },
   })
 
@@ -358,6 +361,7 @@ export default function App() {
                 Создать (Ctrl+Enter)
               </Button>
             </div>
+            {enhanceNotice && <p className="text-sm text-muted-foreground">{enhanceNotice}</p>}
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
               {results.map((img) => (
                 <figure key={img.id} className="overflow-hidden rounded-lg border border-border">
@@ -486,6 +490,7 @@ export default function App() {
                     <a
                       className="inline-flex h-8 items-center rounded-md border border-input px-3 text-xs"
                       href={`/api/images/${img.id}/export`}
+                      download
                     >
                       Скачать
                     </a>

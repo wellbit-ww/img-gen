@@ -2,19 +2,23 @@ FROM nvidia/cuda:12.9.0-cudnn-devel-ubuntu24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    git python3.12 python3.12-venv python3-pip \
+    git python3.12 python3.12-venv ca-certificates libgl1 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
+RUN python3.12 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
 WORKDIR /opt
-RUN git clone --depth 1 https://github.com/ostris/ai-toolkit.git
+RUN git clone --depth 1 --recurse-submodules https://github.com/ostris/ai-toolkit.git
 
 WORKDIR /opt/ai-toolkit
-RUN pip3 install --no-cache-dir -r requirements.txt || pip3 install --no-cache-dir torch torchvision
+RUN pip install --no-cache-dir torch torchvision --index-url https://download.pytorch.org/whl/cu128 \
+    && pip install --no-cache-dir -r requirements.txt
 
-COPY scripts/lora/train_entrypoint.sh /scripts/lora/train_entrypoint.sh
-RUN chmod +x /scripts/lora/train_entrypoint.sh
+COPY scripts/lora/train_entrypoint.sh /usr/local/bin/train_entrypoint.sh
+RUN chmod +x /usr/local/bin/train_entrypoint.sh
 
 ENV HF_HOME=/models/hf
 WORKDIR /data
 
-ENTRYPOINT ["/scripts/lora/train_entrypoint.sh"]
+ENTRYPOINT ["/usr/local/bin/train_entrypoint.sh"]

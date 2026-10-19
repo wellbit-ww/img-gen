@@ -1,37 +1,37 @@
+# Downloads model weights into the named Docker volume "models_data" (mounted at /models).
+# Usage:  .\scripts\download_models.ps1            # Qwen-Image-2.1, Turbo, BiRefNet, 4x-UltraSharp
+#         .\scripts\download_models.ps1 -WithFlux  # + FLUX klein (gated, needs HF_TOKEN)
 param(
-    [string]$HfToken = $env:HF_TOKEN
+    [string]$HfToken = $env:HF_TOKEN,
+    [switch]$WithFlux
 )
 
 $ErrorActionPreference = "Stop"
 
 docker volume create models_data | Out-Null
 
-$models = @(
-    @{ Repo = "Qwen/Qwen-Image-2.1"; Dir = "Qwen__Qwen-Image-2.1" },
-    @{ Repo = "Qwen/Qwen-Image-2.1-Turbo"; Dir = "Qwen__Qwen-Image-2.1-Turbo" },
-    @{ Repo = "ZhengPeng7/BiRefNet"; Dir = "BiRefNet" }
+# Directory names must match what app/engines expects under MODELS_DIR.
+$steps = @(
+    "hf download Qwen/Qwen-Image-2.1 --local-dir /models/Qwen__Qwen-Image-2.1",
+    "hf download Qwen/Qwen-Image-2.1-Turbo --local-dir /models/Qwen__Qwen-Image-2.1-Turbo",
+    "hf download ZhengPeng7/BiRefNet --local-dir /models/BiRefNet",
+    "hf download lokCX/4x-Ultrasharp 4x-UltraSharp.pth --local-dir /models/upscale"
 )
-
-$flux = "black-forest-labs/flux-3-image-klein"
-
-$hfCmd = @"
-pip install -q 'huggingface_hub[cli]' && \
-mkdir -p /models/upscale && \
-"
-
-foreach ($m in $models) {
-    $hfCmd += "hf download $($m.Repo) --local-dir /models/$($m.Dir) && "
+if ($WithFlux) {
+    if (-not $HfToken) { throw "FLUX klein is gated: set HF_TOKEN or pass -HfToken" }
+    $steps += "hf download black-forest-labs/flux-3-image-klein --local-dir /models/black-forest-labs__flux-3-image-klein"
 }
+# Worker and API run as uid 10001; BiRefNet remote code is cached under /models/hf.
+$steps += "mkdir -p /models/hf /models/loras && chown -R 10001:10001 /models"
 
-$hfCmd += @"
-hf download alexoleg/4x-UltraSharp --include '4x-UltraSharp.pth' --local-dir /models/upscale && \
-if [ -n \"\$HF_TOKEN\" ]; then hf download $flux --local-dir /models/flux-3-image-klein || true; fi
-"@
+$script = "set -e; pip install -q -U huggingface_hub; " + ($steps -join "; ")
 
 docker run --rm `
   -v models_data:/models `
   -e HF_TOKEN=$HfToken `
-  ghcr.io/astral-sh/uv:python3.12-bookworm `
-  bash -c $hfCmd
+  -e HF_HUB_ENABLE_HF_TRANSFER=0 `
+  python:3.12-slim `
+  bash -c $script
 
-Write-Host "Models downloaded into Docker volume models_data:/models"
+if ($LASTEXITCODE -ne 0) { throw "Model download failed (exit $LASTEXITCODE)" }
+Write-Host "Models downloaded into Docker volume models_data"

@@ -3,6 +3,11 @@ services:
     image: redis:7-alpine
     ports:
       - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
     restart: unless-stopped
 
   api:
@@ -15,6 +20,7 @@ services:
       ENGINE_MODE: mock
       REDIS_URL: redis://redis:6379
       DATA_DIR: /data
+      MODELS_DIR: /models
       PRESETS_DIR: /config/presets
       WORKERS_CONFIG: /config/workers.yaml
       FONTS_DIR: /assets/fonts
@@ -24,14 +30,21 @@ services:
       - ./assets:/assets:ro
     ports:
       - "8000:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/api/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   worker:
     build:
       context: .
-      dockerfile: docker/Dockerfile.worker
+      dockerfile: docker/Dockerfile.api
     command: ["img-gen-worker"]
     env_file:
       - .env
@@ -39,6 +52,7 @@ services:
       ENGINE_MODE: mock
       REDIS_URL: redis://redis:6379
       DATA_DIR: /data
+      MODELS_DIR: /models
       PRESETS_DIR: /config/presets
       WORKERS_CONFIG: /config/workers.yaml
       FONTS_DIR: /assets/fonts
@@ -46,8 +60,15 @@ services:
       - app_data:/data
       - ./config:/config:ro
       - ./assets:/assets:ro
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import os, redis; redis.from_url(os.environ['REDIS_URL']).ping()\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     depends_on:
-      - redis
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:

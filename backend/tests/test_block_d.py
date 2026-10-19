@@ -10,7 +10,12 @@ from sqlmodel import Session
 from app.config import Settings
 from app.db.models import JobRecord, LoraDataset, LoraTrainJob
 from app.services.lora_dataset import LORA_LONG_SIDE, resize_dataset_image, write_caption
-from app.services.lora_train import build_ai_toolkit_yaml, write_train_config
+from app.services.lora_train import (
+    build_ai_toolkit_yaml,
+    install_trained_lora,
+    wait_for_trainer,
+    write_train_config,
+)
 from app.worker import tasks as worker_tasks
 from app.worker.tasks import process_lora_train
 
@@ -92,6 +97,33 @@ async def test_lora_train_mock_requires_real_mode(worker_db):
         assert job is not None
         assert job.status == "failed"
         assert "real" in (job.error or "").lower()
+
+
+def test_wait_for_trainer_done_and_install(tmp_path: Path):
+    settings = Settings(engine_mode="real", data_dir=tmp_path, models_dir=tmp_path / "models")
+    run_dir = tmp_path / "lora_runs" / "t1"
+    weights = run_dir / "workspace" / "t1"
+    weights.mkdir(parents=True)
+    (weights / "t1.safetensors").write_bytes(b"w")
+    (run_dir / "done").touch()
+    wait_for_trainer(run_dir, lambda: False, timeout_s=5, poll_s=0.01)
+    dest = install_trained_lora(settings, "t1", run_dir)
+    assert dest == tmp_path / "models" / "loras" / "t1" / "pytorch_lora_weights.safetensors"
+    assert dest.read_bytes() == b"w"
+
+
+def test_wait_for_trainer_failed_marker(tmp_path: Path):
+    (tmp_path / "failed").touch()
+    with pytest.raises(RuntimeError, match="ошибкой"):
+        wait_for_trainer(tmp_path, lambda: False, timeout_s=5, poll_s=0.01)
+
+
+def test_wait_for_trainer_not_picked_up(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr("app.services.lora_train.TRAINER_PICKUP_TIMEOUT_S", 0.05)
+    (tmp_path / "queued").touch()
+    with pytest.raises(RuntimeError, match="Trainer не взял"):
+        wait_for_trainer(tmp_path, lambda: False, timeout_s=5, poll_s=0.01)
+    assert not (tmp_path / "queued").exists()
 
 
 def test_update_caption_endpoint(client, data_dir: Path):

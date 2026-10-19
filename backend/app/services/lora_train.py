@@ -1,7 +1,8 @@
 from __future__ import annotations
 
-import os
-import subprocess
+import shutil
+import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -10,12 +11,8 @@ import yaml
 
 from app.config import Settings
 
-
-def repo_root() -> Path:
-    env = os.getenv("IMG_GEN_ROOT")
-    if env:
-        return Path(env).resolve()
-    return Path(__file__).resolve().parents[3]
+TRAINER_TIMEOUT_S = 12 * 3600
+TRAINER_PICKUP_TIMEOUT_S = 120
 
 
 def lora_run_dir(settings: Settings, train_id: str) -> Path:
@@ -142,44 +139,50 @@ def unload_ollama_sync(settings: Settings) -> None:
         pass
 
 
-def run_trainer_container(
-    settings: Settings, train_id: str, _config_path: Path, log_path: Path
+def wait_for_trainer(
+    run_dir: Path,
+    cancel_check: Callable[[], bool],
+    timeout_s: float = TRAINER_TIMEOUT_S,
+    poll_s: float = 10.0,
 ) -> None:
-    if settings.engine_mode == "mock":
-        raise RuntimeError(
-            "Обучение LoRA доступно только при ENGINE_MODE=real и профиле Docker training"
-        )
-    compose = repo_root()
-    compose_files = ["docker-compose.yml", "docker-compose.gpu.yml"]
-    args = ["docker", "compose"]
-    for f in compose_files:
-        p = compose / f
-        if p.is_file():
-            args.extend(["-f", str(p)])
-    args.extend(
-        [
-            "--profile",
-            "training",
-            "run",
-            "--rm",
-            "-e",
-            f"TRAIN_CONFIG_PATH=/data/lora_runs/{train_id}/train.yaml",
-            "trainer",
-        ]
-    )
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    with log_path.open("w", encoding="utf-8") as log:
-        log.write(f"Running: {' '.join(args)}\n")
-        log.flush()
-        proc = subprocess.run(
-            args,
-            cwd=str(compose),
-            stdout=log,
-            stderr=subprocess.STDOUT,
-            check=False,
-        )
-    if proc.returncode != 0:
-        raise RuntimeError(f"Trainer exited with code {proc.returncode}; see {log_path}")
+    """Block until the trainer service marks the run done/failed (see train_entrypoint.sh)."""
+    start = time.monotonic()
+    started = False
+    while time.monotonic() - start < timeout_s:
+        if (run_dir / "done").exists():
+            return
+        if (run_dir / "failed").exists():
+            raise RuntimeError(f"Обучение LoRA завершилось с ошибкой, см. {run_dir / 'train.log'}")
+        if (run_dir / "running").exists():
+            started = True
+        if cancel_check():
+            (run_dir / "queued").unlink(missing_ok=True)
+            raise RuntimeError("Обучение LoRA отменено")
+        if not started and time.monotonic() - start > TRAINER_PICKUP_TIMEOUT_S:
+            (run_dir / "queued").unlink(missing_ok=True)
+            raise RuntimeError(
+                "Trainer не взял задачу: запустите "
+                "`docker compose -f docker-compose.yml -f docker-compose.gpu.yml "
+                "--profile training up -d trainer`"
+            )
+        time.sleep(poll_s)
+    raise RuntimeError(f"Обучение LoRA не завершилось за {timeout_s / 3600:.0f} ч")
+
+
+def install_trained_lora(settings: Settings, train_id: str, run_dir: Path) -> Path:
+    """Copy the final ai-toolkit weights to models/loras/<id> where the engine loads them."""
+    workspace = run_dir / "workspace" / train_id
+    final = workspace / f"{train_id}.safetensors"
+    if not final.is_file():
+        candidates = sorted(workspace.glob("*.safetensors"), key=lambda p: p.stat().st_mtime)
+        if not candidates:
+            raise RuntimeError(f"Trainer не сохранил веса LoRA в {workspace}")
+        final = candidates[-1]
+    dest_dir = settings.models_dir / "loras" / train_id
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / "pytorch_lora_weights.safetensors"
+    shutil.copy2(final, dest)
+    return dest
 
 
 def execute_lora_training(
@@ -187,11 +190,17 @@ def execute_lora_training(
     train_id: str,
     job_id: str,
     payload: dict[str, Any],
+    cancel_check: Callable[[], bool] = lambda: False,
 ) -> None:
     from sqlmodel import Session
 
     from app.db.models import LoraDataset, LoraTrainJob
     from app.worker.tasks import _engine_db
+
+    if settings.engine_mode == "mock":
+        raise RuntimeError(
+            "Обучение LoRA доступно только при ENGINE_MODE=real и запущенном сервисе trainer"
+        )
 
     rank = int(payload.get("rank", 32))
     steps = int(payload.get("steps", 2000))
@@ -213,12 +222,24 @@ def execute_lora_training(
         session.add(train)
         session.commit()
 
-    yaml_path = write_train_config(
-        settings, train_id, dataset_path, rank, steps, lr, trigger_word
-    )
+    write_train_config(settings, train_id, dataset_path, rank, steps, lr, trigger_word)
+    for marker in ("done", "failed", "running"):
+        (run_dir / marker).unlink(missing_ok=True)
     unload_ollama_sync(settings)
+    (run_dir / "queued").touch()
     log_path = run_dir / "train.log"
-    run_trainer_container(settings, train_id, yaml_path, log_path)
+    try:
+        wait_for_trainer(run_dir, cancel_check)
+        install_trained_lora(settings, train_id, run_dir)
+    except Exception as exc:
+        with Session(_engine_db) as session:
+            train = session.get(LoraTrainJob, train_id)
+            if train:
+                train.status = "failed"
+                train.log = str(exc)
+                session.add(train)
+                session.commit()
+        raise
 
     with Session(_engine_db) as session:
         train = session.get(LoraTrainJob, train_id)

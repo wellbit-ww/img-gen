@@ -91,7 +91,12 @@ def export_image(
         "jpeg": "image/jpeg",
         "webp": "image/webp",
     }[format]
-    return Response(content=buf.getvalue(), media_type=media)
+    filename = f"{image_id}.{'jpg' if format == 'jpeg' else format}"
+    return Response(
+        content=buf.getvalue(),
+        media_type=media,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.get("/images/{image_id}")

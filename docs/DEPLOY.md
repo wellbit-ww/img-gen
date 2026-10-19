@@ -1,73 +1,163 @@
-# Deploy on Windows 11 + Docker (4× RTX 5090)
+# Развёртывание на сервере (Windows 11 + Docker Desktop + 4× RTX 5090)
 
-## Prerequisites
-
-- NVIDIA driver 570+ with WSL2 GPU support (`nvidia-smi` inside WSL).
-- Docker Desktop: WSL2 backend, **Use GPU** enabled.
-- In `%UserProfile%\.wslconfig`: `memory=96GB` (or more), `swap=32GB`.
-- Hugging Face token with access to gated models (optional FLUX).
-- **64+ GB RAM** recommended when using CPU offload.
-
-## Verify GPU in Docker
+Команды для PowerShell, запускать из корня репозитория. Если не сказано иное, команда compose всегда такая:
 
 ```powershell
-docker run --rm --gpus all nvidia/cuda:12.9.0-base-ubuntu24.04 nvidia-smi
+$dc = "docker compose -f docker-compose.yml -f docker-compose.gpu.yml"
 ```
 
-## Configuration
+## 1. Подготовка сервера (один раз)
 
-1. Copy `.env.example` to `.env` and set `APP_API_KEY`, `HF_TOKEN`, `ENGINE_MODE=real`.
-2. Download models into a **named Docker volume** (not slow NTFS bind-mount for weights):
+1. Драйвер NVIDIA 570+ (поддержка Blackwell / sm_120 и WSL2).
+2. Docker Desktop: бэкенд WSL2, в Settings → Resources → WSL integration включена дистрибуция по умолчанию.
+3. `%UserProfile%\.wslconfig` (после правки: `wsl --shutdown` и перезапуск Docker Desktop):
+
+   ```ini
+   [wsl2]
+   memory=96GB
+   swap=32GB
+   ```
+
+4. Проверка GPU в контейнере (должны быть видны 4 карты):
+
+   ```powershell
+   docker run --rm --gpus all nvidia/cuda:12.9.0-base-ubuntu24.04 nvidia-smi
+   ```
+
+5. Git и доступ к репозиторию: `winget install Git.Git`.
+
+## 2. Перенос кода
 
 ```powershell
-.\scripts\download_models.ps1
+cd C:\srv
+git clone -b cursor/presentation-image-generator https://github.com/wellbit-ww/img-gen.git
+cd img-gen
 ```
 
-Or run downloads inside a one-off container mounting `models_data` volume.
+Без доступа к GitHub: на машине разработки `git bundle create img-gen.bundle cursor/presentation-image-generator`, перенести файл, на сервере `git clone -b cursor/presentation-image-generator img-gen.bundle img-gen`.
 
-## Start stack
+Веса моделей, `node_modules`, `.venv` и `data/` переносить не нужно: образы собираются на сервере, фронтенд собирается внутри `Dockerfile.api`.
+
+## 3. Настройка `.env`
 
 ```powershell
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d --build
+Copy-Item .env.example .env
+notepad .env
 ```
 
-Pull Ollama model on the server:
+Обязательно:
+
+| Переменная | Значение |
+|------------|----------|
+| `APP_API_KEY` | пароль для входа в UI (пустой = вход отключён) |
+| `HF_TOKEN` | токен Hugging Face; нужен для FLUX klein (gated) и ускоряет загрузку |
+
+`ENGINE_MODE`, `REDIS_URL`, `DATA_DIR`, `MODELS_DIR`, `OLLAMA_URL` задаются в compose-файлах и из `.env` не берутся.
+
+## 4. Загрузка моделей в том `models_data`
 
 ```powershell
-docker compose exec ollama ollama pull qwen3-vl:8b
+$env:HF_TOKEN = "hf_..."          # или оставить пустым без FLUX
+.\scripts\download_models.ps1     # Qwen-Image-2.1, Turbo, BiRefNet, 4x-UltraSharp (~70+ ГБ)
+.\scripts\download_models.ps1 -WithFlux   # опционально, FLUX klein (нужен принятый доступ на HF)
 ```
 
-## Smoke test
+Скрипт кладёт веса в именованный том `models_data` (не на NTFS) и выставляет владельца uid 10001, от которого работают api и worker.
+
+Проверка:
 
 ```powershell
-docker compose exec worker uv run python /app/scripts/smoke_test_gpu.py
+docker run --rm -v models_data:/models alpine ls -la /models /models/upscale
 ```
 
-Tune `config/workers.yaml` memory strategies if OOM occurs.
-
-## Training LoRA
-
-1. Upload a dataset via `POST /api/lora/datasets` (images are resized to 1328 px on the long side; captions via Ollama).
-2. Start training: `POST /api/lora/train` with `dataset_id`.
-3. The worker writes `train.yaml` (ai-toolkit, `arch: qwen_image_2`) under `/data/lora_runs/<train_id>/` and runs:
+## 5. Сборка и запуск
 
 ```powershell
-docker compose -f docker-compose.yml -f docker-compose.gpu.yml --profile training run --rm trainer
+Invoke-Expression "$dc build"
+Invoke-Expression "$dc up -d"
+Invoke-Expression "$dc exec ollama ollama pull qwen3-vl:8b"
+Invoke-Expression "$dc ps"
 ```
 
-Set `TRAIN_CONFIG_PATH=/data/lora_runs/<train_id>/train.yaml` when invoking the trainer container (the worker sets this automatically in `ENGINE_MODE=real`).
+Ожидаемо через 1–5 минут: `redis`, `api`, `worker`, `ollama` в статусе `healthy` / `running`.
 
-Logs and sample PNGs: `/data/lora_runs/<train_id>/train.log` and under `workspace/`. Status: `GET /api/lora/train/<train_id>`.
+```powershell
+Invoke-RestMethod http://localhost:8000/api/health | ConvertTo-Json -Depth 4
+```
 
-## Firewall
+В `workers` должны быть heartbeat-записи `gpu0-qwen-image-2.1`, `gpu1-qwen-image-2.1-turbo`, `gpu3-utils`; `engine_mode` = `real`.
 
-Allow TCP **8000** for LAN access, or put Caddy/IIS reverse proxy in front with HTTPS.
+UI: `http://<сервер>:8000`. Для доступа из сети откройте порт:
 
-## Typical issues
+```powershell
+New-NetFirewallRule -DisplayName "img-gen 8000" -Direction Inbound -Protocol TCP -LocalPort 8000 -Action Allow
+```
 
-| Issue | Fix |
-|-------|-----|
-| `no kernel image` on 5090 | Use CUDA 12.8+ PyTorch wheels (`cu128`) in GPU image |
-| OOM on 32 GB | Enable `text_encoder_offload` or `fp8` in worker config |
-| Slow model download | Use Docker named volume `models_data`, not `C:\` bind mount |
-| SSE stuck | Ensure Redis and worker containers are running |
+## 6. GPU smoke-тест
+
+Smoke-тест сам загружает модели, поэтому на время теста воркер останавливают, чтобы не было OOM:
+
+```powershell
+Invoke-Expression "$dc stop worker"
+Invoke-Expression "$dc run --rm worker python /scripts/smoke_test_gpu.py"
+Invoke-Expression "$dc start worker"
+```
+
+При OOM поменяйте `memory:` у воркера в `config/workers.yaml` (`full` → `text_encoder_offload` → `fp8` → `model_cpu_offload`) и выполните `$dc restart worker`.
+
+## 7. Обучение LoRA
+
+1. Собрать образ trainer (долго, ставит ai-toolkit):
+
+   ```powershell
+   Invoke-Expression "$dc --profile training build trainer"
+   ```
+
+2. Запустить trainer как сервис. Он следит за `/data/lora_runs/*/queued`:
+
+   ```powershell
+   Invoke-Expression "$dc --profile training up -d trainer"
+   ```
+
+3. В UI или через API: `POST /api/lora/datasets` (15–40 картинок; ресайз до 1328 px, подписи через Ollama), правка подписей `PUT /api/lora/datasets/{id}/captions/{img_000}`, затем `POST /api/lora/train`.
+4. Воркер пишет `/data/lora_runs/<id>/train.yaml` (ai-toolkit, `arch: qwen_image_2`), выгружает модель из Ollama (`keep_alive: 0`) и ставит маркер `queued`. Trainer обучает, пишет `train.log`, сэмплы в `workspace/` и маркер `done` или `failed`. Готовые веса копируются в `/models/loras/<id>/`.
+5. Статус и лог: `GET /api/lora/train/<id>`.
+
+Разовый ручной прогон одного конфига:
+
+```powershell
+Invoke-Expression "$dc --profile training run --rm trainer /data/lora_runs/<id>/train.yaml"
+```
+
+Trainer и utils-воркер оба на GPU 3. Пока идёт обучение, не запускайте апскейл и удаление фона.
+
+## 8. Обновление
+
+```powershell
+git pull
+Invoke-Expression "$dc up -d --build"
+```
+
+Миграции БД (`alembic upgrade head`) применяются автоматически при старте api и worker.
+
+## 9. Логи и диагностика
+
+```powershell
+Invoke-Expression "$dc logs -f --tail 100 api worker"     # JSON (structlog)
+Invoke-Expression "$dc exec worker nvidia-smi"
+```
+
+## Типичные проблемы
+
+| Симптом | Причина и решение |
+|---------|-------------------|
+| `no kernel image is available` | старый PyTorch; в образе worker torch/torchvision `+cu128` из lock-файла — пересоберите `$dc build --no-cache worker` |
+| worker `unhealthy` первые минуты | загрузка моделей; `start_period` 300 с. Смотрите `$dc logs worker` |
+| `Permission denied` в `/models` | скрипт загрузки не сделал `chown`: `docker run --rm -v models_data:/models alpine chown -R 10001:10001 /models` |
+| задачи висят в `queued` | воркер не слушает очередь: сверить `config/workers.yaml` и `/api/health` |
+| OOM на 32 ГБ | стратегия `memory:` в `config/workers.yaml`, draft-качество / Turbo |
+| «Улучшить» не меняет промпт, внизу «Ollama unavailable» | `$dc exec ollama ollama pull qwen3-vl:8b`, проверить `$dc ps ollama` |
+| LoRA: «Trainer не взял задачу» | не запущен `$dc --profile training up -d trainer` |
+| LoRA: `failed`, см. `train.log` | `docker run --rm -v app_data:/data alpine tail -50 /data/lora_runs/<id>/train.log` |
+| в UI 401 | войдите с паролем `APP_API_KEY`; cookie живёт 7 дней |
+| медленная загрузка весов | веса должны лежать в томе `models_data`, а не в bind-mount на `C:\` |
